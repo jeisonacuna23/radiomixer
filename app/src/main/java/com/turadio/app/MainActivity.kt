@@ -42,18 +42,14 @@ fun PantallaPrincipal() {
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     
-    // Estados del stream
     var conectado by remember { mutableStateOf(false) }
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
     val shoutcast = remember { ShoutcastClient() }
-    val encoder = remember { AacEncoder() }
-    val scope = rememberCoroutineScope()
 
     DisposableEffect(Unit) {
         onDispose { 
             exoPlayer.release()
             shoutcast.disconnect()
-            encoder.stop()
         }
     }
 
@@ -80,7 +76,7 @@ fun PantallaPrincipal() {
         OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña de Stream") }, modifier = Modifier.fillMaxWidth())
 
         Spacer(modifier = Modifier.height(10.dp))
-        Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
+        Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
         
         if (conectado) {
             Text("ESTADO: 🔴 EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
@@ -100,28 +96,24 @@ fun PantallaPrincipal() {
                 }
                 
                 if (!conectado) {
-                    // Conectar al servidor
-                    if (shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)) {
+                    mensajeEstado = "Conectando..."
+                    // Llamada a la función que ahora devuelve un String
+                    val resultado = shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)
+                    
+                    if (resultado == "OK") {
                         conectado = true
-                        mensajeEstado = "Conectado al servidor"
-                        
-                        // Iniciar ExoPlayer con la primera canción
+                        mensajeEstado = "¡Conectado con éxito!"
                         exoPlayer.setMediaItem(MediaItem.fromUri(listaCanciones.first()))
                         exoPlayer.prepare()
                         exoPlayer.play()
-                        
-                        // Nota: En la Fase 5 conectaremos el audio real del ExoPlayer al Encoder
-                        // encoder.start { data, _ -> shoutcast.sendAudio(data) }
                     } else {
-                        mensajeEstado = "Error al conectar. Revisa IP/Pass"
+                        mensajeEstado = resultado // Aquí veremos el error real
                     }
                 } else {
-                    // Desconectar
                     conectado = false
                     mensajeEstado = "Transmisión detenida"
                     exoPlayer.stop()
                     shoutcast.disconnect()
-                    encoder.stop()
                 }
             },
             modifier = Modifier.fillMaxWidth().height(60.dp),
