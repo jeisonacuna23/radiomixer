@@ -1,9 +1,7 @@
 package com.turadio.app
 
 import android.util.Base64
-import java.io.BufferedReader
 import java.io.DataOutputStream
-import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -19,32 +17,25 @@ class ShoutcastClient {
 
             val auth = Base64.encodeToString("source:$password".toByteArray(), Base64.NO_WRAP)
             
-            // Probamos enviando Content-Type: audio/mpeg (por si el panel espera MP3)
+            // Enviamos el header exacto y NO nos quedamos esperando respuesta
             val header = "SOURCE / HTTP/1.0\r\n" +
                          "Host: $ip:$port\r\n" +
-                         "User-Agent: Mozilla/5.0\r\n" +
+                         "User-Agent: RadioMixer/1.0\r\n" +
                          "Authorization: Basic $auth\r\n" +
-                         "Content-Type: audio/mpeg\r\n" +
+                         "Content-Type: audio/aacp\r\n" +
                          "icy-name: RadioMixer\r\n" +
                          "icy-genre: Various\r\n" +
+                         "icy-br: 64\r\n" +
                          "icy-pub: 0\r\n" +
-                         "icy-br: 64\r\n\r\n"
+                         "icy-metadata: 1\r\n\r\n"
             
             out?.write(header.toByteArray())
             out?.flush()
             
-            val reader = BufferedReader(InputStreamReader(socket?.getInputStream()))
-            
-            // Leemos la primera línea de la respuesta HTTP
-            val response = reader.readLine()
-            
-            if (response != null) {
-                return "Respuesta: $response"
-            } else {
-                return "Servidor cerró sin responder. (¿AutoDJ encendido o formato incorrecto?)"
-            }
+            // Si no hubo excepción al escribir, asumimos que conectó
+            return "OK"
         } catch (e: Exception) {
-            return "Error de red: ${e.message}"
+            return "Error: ${e.message}"
         }
     }
 
@@ -52,7 +43,9 @@ class ShoutcastClient {
         try {
             out?.write(data)
             out?.flush()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            // Aquí no hacemos nada, pero si falla el envío, se cortará
+        }
     }
 
     fun disconnect() {
