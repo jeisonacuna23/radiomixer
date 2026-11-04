@@ -18,6 +18,9 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +48,9 @@ fun PantallaPrincipal() {
     var conectado by remember { mutableStateOf(false) }
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
     val shoutcast = remember { ShoutcastClient() }
+    
+    // NUEVO: Scope para lanzar tareas en segundo plano
+    val scope = rememberCoroutineScope()
 
     DisposableEffect(Unit) {
         onDispose { 
@@ -97,23 +103,31 @@ fun PantallaPrincipal() {
                 
                 if (!conectado) {
                     mensajeEstado = "Conectando..."
-                    // Llamada a la función que ahora devuelve un String
-                    val resultado = shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)
                     
-                    if (resultado == "OK") {
-                        conectado = true
-                        mensajeEstado = "¡Conectado con éxito!"
-                        exoPlayer.setMediaItem(MediaItem.fromUri(listaCanciones.first()))
-                        exoPlayer.prepare()
-                        exoPlayer.play()
-                    } else {
-                        mensajeEstado = resultado // Aquí veremos el error real
+                    // NUEVO: Lanzamos la conexión en un hilo de fondo (IO)
+                    scope.launch {
+                        val resultado = withContext(Dispatchers.IO) {
+                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)
+                        }
+                        
+                        if (resultado == "OK") {
+                            conectado = true
+                            mensajeEstado = "¡Conectado con éxito!"
+                            exoPlayer.setMediaItem(MediaItem.fromUri(listaCanciones.first()))
+                            exoPlayer.prepare()
+                            exoPlayer.play()
+                        } else {
+                            mensajeEstado = resultado // Aquí veremos el error real
+                        }
                     }
                 } else {
                     conectado = false
                     mensajeEstado = "Transmisión detenida"
                     exoPlayer.stop()
-                    shoutcast.disconnect()
+                    
+                    scope.launch(Dispatchers.IO) {
+                        shoutcast.disconnect()
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth().height(60.dp),
