@@ -17,7 +17,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,14 +60,25 @@ fun PantallaPrincipal() {
         } 
     }
     
-    // 2. El ExoPlayer modificado con nuestro procesador
-    val audioSink = remember { 
-        DefaultAudioSink.Builder(context)
-            .setAudioProcessors(arrayOf(captureProcessor))
-            .build() 
+    // 2. Inyectamos el procesador mediante la fábrica (Solución al error de GitHub)
+    val renderersFactory = remember {
+        object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(
+                context: android.content.Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+                enableOffload: Boolean
+            ): AudioSink? {
+                return DefaultAudioSink.Builder(context)
+                    .setAudioProcessors(arrayOf(captureProcessor))
+                    .build()
+            }
+        }
     }
+
+    // 3. Creamos el ExoPlayer usando la fábrica
     val exoPlayer = remember { 
-        ExoPlayer.Builder(context).setAudioSink(audioSink).build() 
+        ExoPlayer.Builder(context, renderersFactory).build() 
     }
 
     DisposableEffect(Unit) {
@@ -129,14 +142,12 @@ fun PantallaPrincipal() {
                             conectado = true
                             mensajeEstado = "¡Conectado! Iniciando audio..."
                             
-                            // Arrancamos el encoder y lo conectamos a la red
                             encoder.start { aacBytes ->
                                 scope.launch(Dispatchers.IO) {
                                     shoutcast.sendAudio(aacBytes)
                                 }
                             }
                             
-                            // Damos play a la música (el procesador hará la magia)
                             exoPlayer.setMediaItem(MediaItem.fromUri(listaCanciones.first()))
                             exoPlayer.prepare()
                             exoPlayer.play()
