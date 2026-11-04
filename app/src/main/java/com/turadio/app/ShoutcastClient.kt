@@ -1,7 +1,9 @@
 package com.turadio.app
 
 import android.util.Base64
+import java.io.BufferedReader
 import java.io.DataOutputStream
+import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -16,11 +18,13 @@ class ShoutcastClient {
             out = DataOutputStream(socket?.getOutputStream())
 
             val auth = Base64.encodeToString("source:$password".toByteArray(), Base64.NO_WRAP)
+            
+            // Probamos enviando Content-Type: audio/mpeg (por si el panel espera MP3)
             val header = "SOURCE / HTTP/1.0\r\n" +
                          "Host: $ip:$port\r\n" +
-                         "User-Agent: RadioMixer/1.0\r\n" +
+                         "User-Agent: Mozilla/5.0\r\n" +
                          "Authorization: Basic $auth\r\n" +
-                         "Content-Type: audio/aacp\r\n" +
+                         "Content-Type: audio/mpeg\r\n" +
                          "icy-name: RadioMixer\r\n" +
                          "icy-genre: Various\r\n" +
                          "icy-pub: 0\r\n" +
@@ -29,22 +33,18 @@ class ShoutcastClient {
             out?.write(header.toByteArray())
             out?.flush()
             
-            val inputStream = socket?.getInputStream()
-            val buffer = ByteArray(1024)
-            val bytesRead = inputStream?.read(buffer)
+            val reader = BufferedReader(InputStreamReader(socket?.getInputStream()))
             
-            if (bytesRead != null && bytesRead > 0) {
-                val response = String(buffer, 0, bytesRead)
-                if (response.contains("200") || response.contains("OK")) {
-                    return "OK"
-                } else {
-                    return "Rechazado: ${response.lines().firstOrNull()}"
-                }
+            // Leemos la primera línea de la respuesta HTTP
+            val response = reader.readLine()
+            
+            if (response != null) {
+                return "Respuesta: $response"
             } else {
-                return "Servidor cerró conexión. (¿Contraseña mal o AutoDJ encendido?)"
+                return "Servidor cerró sin responder. (¿AutoDJ encendido o formato incorrecto?)"
             }
         } catch (e: Exception) {
-            "Error: ${e.message}"
+            return "Error de red: ${e.message}"
         }
     }
 
