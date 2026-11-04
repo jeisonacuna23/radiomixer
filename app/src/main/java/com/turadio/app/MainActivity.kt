@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.media3.common.MediaItem
@@ -43,6 +44,7 @@ fun PantallaPrincipal() {
     val context = LocalContext.current
     var ip by remember { mutableStateOf("radio.conectarservidor.com") }
     var puerto by remember { mutableStateOf("8016") }
+    var usuario by remember { mutableStateOf("jeisonacuna2323") } // NUEVO CAMPO
     var password by remember { mutableStateOf("") }
     
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
@@ -115,7 +117,15 @@ fun PantallaPrincipal() {
 
         OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = usuario, onValueChange = { usuario = it }, label = { Text("Usuario (Panel)") }, modifier = Modifier.fillMaxWidth())
+        
+        OutlinedTextField(
+            value = password, 
+            onValueChange = { password = it }, 
+            label = { Text("Contraseña de Stream") }, 
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = PasswordVisualTransformation()
+        )
 
         Spacer(modifier = Modifier.height(10.dp))
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
@@ -141,7 +151,7 @@ fun PantallaPrincipal() {
                     mensajeEstado = "Conectando..."
                     scope.launch {
                         val resultado = withContext(Dispatchers.IO) {
-                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)
+                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, usuario, password)
                         }
                         
                         if (resultado == "OK") {

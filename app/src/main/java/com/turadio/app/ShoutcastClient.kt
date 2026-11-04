@@ -10,15 +10,15 @@ class ShoutcastClient {
     private var out: DataOutputStream? = null
     var onConnectionLost: (() -> Unit)? = null
 
-    fun connect(ip: String, port: Int, password: String): String {
+    fun connect(ip: String, port: Int, user: String, password: String): String {
         return try {
             socket = Socket()
             socket?.connect(InetSocketAddress(ip, port), 5000)
             out = DataOutputStream(socket?.getOutputStream())
 
-            val auth = Base64.encodeToString("source:$password".toByteArray(), Base64.NO_WRAP)
+            // Usamos el usuario del panel en lugar de "source"
+            val auth = Base64.encodeToString("$user:$password".toByteArray(), Base64.NO_WRAP)
             
-            // LA CLAVE ESTÁ AQUÍ: Content-Type aacp, 64 kbps y icy-sid: 1
             val header = "SOURCE / HTTP/1.0\r\n" +
                          "Host: $ip:$port\r\n" +
                          "User-Agent: RadioMixer/1.0\r\n" +
@@ -27,7 +27,7 @@ class ShoutcastClient {
                          "icy-name: RadioMixer\r\n" +
                          "icy-genre: Various\r\n" +
                          "icy-br: 64\r\n" +
-                         "icy-sid: 1\r\n" + 
+                         "icy-sid: 1\r\n" +
                          "icy-pub: 0\r\n\r\n"
             
             out?.write(header.toByteArray())
