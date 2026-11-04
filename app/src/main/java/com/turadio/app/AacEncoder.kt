@@ -15,7 +15,7 @@ class AacEncoder {
         this.isRunning = true
 
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 44100, 2).apply {
-            setInteger(MediaFormat.KEY_BIT_RATE, 64000) // 64 kbps
+            setInteger(MediaFormat.KEY_BIT_RATE, 64000)
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
         }
@@ -35,7 +35,8 @@ class AacEncoder {
                             val data = ByteArray(bufferInfo.size)
                             buffer.position(bufferInfo.offset)
                             buffer.get(data)
-                            callback?.invoke(data)
+                            // Enviamos el audio con el encabezado ADTS
+                            callback?.invoke(addAdtsHeader(data))
                         }
                         codec?.releaseOutputBuffer(outIndex, false)
                     }
@@ -53,8 +54,13 @@ class AacEncoder {
                 val buffer = codec?.getInputBuffer(inIndex)
                 if (buffer != null) {
                     buffer.clear()
-                    buffer.put(pcmData)
-                    codec?.queueInputBuffer(inIndex, 0, pcmData.size, System.nanoTime() / 1000, 0)
+                    if (pcmData.size > buffer.capacity()) {
+                        buffer.put(pcmData, 0, buffer.capacity())
+                        codec?.queueInputBuffer(inIndex, 0, buffer.capacity(), System.nanoTime() / 1000, 0)
+                    } else {
+                        buffer.put(pcmData)
+                        codec?.queueInputBuffer(inIndex, 0, pcmData.size, System.nanoTime() / 1000, 0)
+                    }
                 }
             }
         } catch (e: Exception) {}
@@ -66,5 +72,24 @@ class AacEncoder {
         try { codec?.stop() } catch (e: Exception) {}
         codec?.release()
         codec = null
+    }
+
+    // Función que añade el encabezado que exige Shoutcast para AAC
+    private fun addAdtsHeader(aacData: ByteArray): ByteArray {
+        val packetSize = aacData.size + 7
+        val adts = ByteArray(7)
+        val profile = 2 // AAC LC
+        val freqIdx = 4 // 44100 Hz
+        val chanCfg = 2 // Stereo
+
+        adts[0] = 0xFF.toByte()
+        adts[1] = 0xF1.toByte()
+        adts[2] = (((profile - 1) shl 6) + (freqIdx shl 2) + (chanCfg shr 2)).toByte()
+        adts[3] = (((chanCfg and 3) shl 6) + (packetSize shr 11)).toByte()
+        adts[4] = ((packetSize and 0x7FF) shr 3).toByte()
+        adts[5] = (((packetSize and 7) shl 5) + 0x1F).toByte()
+        adts[6] = 0xFC.toByte()
+
+        return adts + aacData
     }
 }
