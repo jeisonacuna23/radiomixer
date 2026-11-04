@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -39,22 +40,39 @@ class MainActivity : ComponentActivity() {
 fun PantallaPrincipal() {
     val context = LocalContext.current
     var ip by remember { mutableStateOf("radio.conectarservidor.com") }
-    // Sugerimos 8014 como puerto de fuente
-    var puerto by remember { mutableStateOf("8014") }
+    var puerto by remember { mutableStateOf("8016") }
     var password by remember { mutableStateOf("") }
     
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
-    
     var conectado by remember { mutableStateOf(false) }
-    val exoPlayer = remember { ExoPlayer.Builder(context).build() }
+    
     val shoutcast = remember { ShoutcastClient() }
+    val encoder = remember { AacEncoder() }
     val scope = rememberCoroutineScope()
+
+    // 1. El procesador que atrapa el audio
+    val captureProcessor = remember { 
+        CaptureAudioProcessor { pcm -> 
+            if (conectado) encoder.encode(pcm) 
+        } 
+    }
+    
+    // 2. El ExoPlayer modificado con nuestro procesador
+    val audioSink = remember { 
+        DefaultAudioSink.Builder(context)
+            .setAudioProcessors(arrayOf(captureProcessor))
+            .build() 
+    }
+    val exoPlayer = remember { 
+        ExoPlayer.Builder(context).setAudioSink(audioSink).build() 
+    }
 
     DisposableEffect(Unit) {
         onDispose { 
             exoPlayer.release()
             shoutcast.disconnect()
+            encoder.stop()
         }
     }
 
@@ -77,14 +95,14 @@ fun PantallaPrincipal() {
         Text("Configuración SonicPanel", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto (Fuente/DJ)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto (8016)") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña de Stream") }, modifier = Modifier.fillMaxWidth())
 
         Spacer(modifier = Modifier.height(10.dp))
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
         
         if (conectado) {
-            Text("ESTADO: 🔴 EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+            Text("ESTADO: 🔴 EN VIVO (Enviando Audio)", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
         }
 
         Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
@@ -101,16 +119,24 @@ fun PantallaPrincipal() {
                 }
                 
                 if (!conectado) {
-                    mensajeEstado = "Conectando al puerto $puerto..."
-                    
+                    mensajeEstado = "Conectando..."
                     scope.launch {
                         val resultado = withContext(Dispatchers.IO) {
-                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8014, password)
+                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)
                         }
                         
                         if (resultado == "OK") {
                             conectado = true
-                            mensajeEstado = "¡Conectado con éxito!"
+                            mensajeEstado = "¡Conectado! Iniciando audio..."
+                            
+                            // Arrancamos el encoder y lo conectamos a la red
+                            encoder.start { aacBytes ->
+                                scope.launch(Dispatchers.IO) {
+                                    shoutcast.sendAudio(aacBytes)
+                                }
+                            }
+                            
+                            // Damos play a la música (el procesador hará la magia)
                             exoPlayer.setMediaItem(MediaItem.fromUri(listaCanciones.first()))
                             exoPlayer.prepare()
                             exoPlayer.play()
@@ -122,6 +148,7 @@ fun PantallaPrincipal() {
                     conectado = false
                     mensajeEstado = "Transmisión detenida"
                     exoPlayer.stop()
+                    encoder.stop()
                     scope.launch(Dispatchers.IO) { shoutcast.disconnect() }
                 }
             },

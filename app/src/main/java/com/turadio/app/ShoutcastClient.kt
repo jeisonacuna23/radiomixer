@@ -15,10 +15,7 @@ class ShoutcastClient {
             socket?.connect(InetSocketAddress(ip, port), 5000)
             out = DataOutputStream(socket?.getOutputStream())
 
-            // Shoutcast usualmente requiere que el usuario sea "source" o "admin"
             val auth = Base64.encodeToString("source:$password".toByteArray(), Base64.NO_WRAP)
-            
-            // Cabecera exacta que espera Shoutcast v1/v2
             val header = "SOURCE / HTTP/1.0\r\n" +
                          "Host: $ip:$port\r\n" +
                          "User-Agent: RadioMixer/1.0\r\n" +
@@ -32,8 +29,6 @@ class ShoutcastClient {
             out?.write(header.toByteArray())
             out?.flush()
             
-            // Intentamos leer si el servidor responde algo.
-            // Si el servidor cierra la conexión, el read() devolverá -1
             val inputStream = socket?.getInputStream()
             val buffer = ByteArray(1024)
             val bytesRead = inputStream?.read(buffer)
@@ -46,10 +41,7 @@ class ShoutcastClient {
                     return "Rechazado: ${response.lines().firstOrNull()}"
                 }
             } else {
-                // Si bytesRead es -1, el servidor colgó sin decir nada.
-                // En Shoutcast, esto a veces significa que SÍ conectó, pero
-                // aún no hay datos de audio fluyendo. Lo tomaremos como éxito temporal.
-                return "OK" 
+                return "Servidor cerró conexión. (¿Contraseña mal o AutoDJ encendido?)"
             }
         } catch (e: Exception) {
             "Error: ${e.message}"

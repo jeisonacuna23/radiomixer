@@ -6,9 +6,14 @@ import android.media.MediaFormat
 
 class AacEncoder {
     private var codec: MediaCodec? = null
-    private val bufferInfo = MediaCodec.BufferInfo()
+    private var isRunning = false
+    private var thread: Thread? = null
+    private var callback: ((ByteArray) -> Unit)? = null
 
-    fun start(onEncodedData: (ByteArray, Int) -> Unit) {
+    fun start(onData: (ByteArray) -> Unit) {
+        this.callback = onData
+        this.isRunning = true
+
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 44100, 2).apply {
             setInteger(MediaFormat.KEY_BIT_RATE, 64000) // 64 kbps
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -19,32 +24,45 @@ class AacEncoder {
         codec?.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         codec?.start()
 
-        Thread {
-            while (true) {
-                val inputIndex = codec?.dequeueInputBuffer(10000) ?: -1
-                // Nota: Esta es una implementación simplificada. 
-                // Para producción real, aquí se inyectan los bytes PCM capturados.
-                if (inputIndex >= 0) {
-                    // Simulando inyección de datos para que compile
-                    codec?.queueInputBuffer(inputIndex, 0, 0, System.nanoTime() / 1000, 0)
-                }
-
-                val outputIndex = codec?.dequeueOutputBuffer(bufferInfo, 10000) ?: -1
-                if (outputIndex >= 0) {
-                    val outBuffer = codec?.getOutputBuffer(outputIndex)
-                    if (outBuffer != null && bufferInfo.size > 0) {
-                        val data = ByteArray(bufferInfo.size)
-                        outBuffer.position(bufferInfo.offset)
-                        outBuffer.get(data)
-                        onEncodedData(data, bufferInfo.size)
+        thread = Thread {
+            val bufferInfo = MediaCodec.BufferInfo()
+            while (isRunning) {
+                try {
+                    val outIndex = codec?.dequeueOutputBuffer(bufferInfo, 10000) ?: -1
+                    if (outIndex >= 0) {
+                        val buffer = codec?.getOutputBuffer(outIndex)
+                        if (buffer != null && bufferInfo.size > 0) {
+                            val data = ByteArray(bufferInfo.size)
+                            buffer.position(bufferInfo.offset)
+                            buffer.get(data)
+                            callback?.invoke(data)
+                        }
+                        codec?.releaseOutputBuffer(outIndex, false)
                     }
-                    codec?.releaseOutputBuffer(outputIndex, false)
+                } catch (e: Exception) { break }
+            }
+        }
+        thread?.start()
+    }
+
+    fun encode(pcmData: ByteArray) {
+        if (!isRunning || codec == null) return
+        try {
+            val inIndex = codec?.dequeueInputBuffer(10000) ?: -1
+            if (inIndex >= 0) {
+                val buffer = codec?.getInputBuffer(inIndex)
+                if (buffer != null) {
+                    buffer.clear()
+                    buffer.put(pcmData)
+                    codec?.queueInputBuffer(inIndex, 0, pcmData.size, System.nanoTime() / 1000, 0)
                 }
             }
-        }.start()
+        } catch (e: Exception) {}
     }
 
     fun stop() {
+        isRunning = false
+        thread?.join(1000)
         try { codec?.stop() } catch (e: Exception) {}
         codec?.release()
         codec = null
