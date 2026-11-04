@@ -54,4 +54,7 @@ dependencies {
     
     // Para guardar la configuración
     implementation("androidx.datastore:datastore-preferences:1.1.0")
+    
+    // Para leer archivos y carpetas
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }
