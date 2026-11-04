@@ -39,7 +39,8 @@ class MainActivity : ComponentActivity() {
 fun PantallaPrincipal() {
     val context = LocalContext.current
     var ip by remember { mutableStateOf("radio.conectarservidor.com") }
-    var puerto by remember { mutableStateOf("8016") }
+    // Sugerimos 8014 como puerto de fuente
+    var puerto by remember { mutableStateOf("8014") }
     var password by remember { mutableStateOf("") }
     
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
@@ -48,8 +49,6 @@ fun PantallaPrincipal() {
     var conectado by remember { mutableStateOf(false) }
     val exoPlayer = remember { ExoPlayer.Builder(context).build() }
     val shoutcast = remember { ShoutcastClient() }
-    
-    // NUEVO: Scope para lanzar tareas en segundo plano
     val scope = rememberCoroutineScope()
 
     DisposableEffect(Unit) {
@@ -78,11 +77,11 @@ fun PantallaPrincipal() {
         Text("Configuración SonicPanel", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto (Fuente/DJ)") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña de Stream") }, modifier = Modifier.fillMaxWidth())
 
         Spacer(modifier = Modifier.height(10.dp))
-        Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+        Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
         
         if (conectado) {
             Text("ESTADO: 🔴 EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
@@ -102,12 +101,11 @@ fun PantallaPrincipal() {
                 }
                 
                 if (!conectado) {
-                    mensajeEstado = "Conectando..."
+                    mensajeEstado = "Conectando al puerto $puerto..."
                     
-                    // NUEVO: Lanzamos la conexión en un hilo de fondo (IO)
                     scope.launch {
                         val resultado = withContext(Dispatchers.IO) {
-                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)
+                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8014, password)
                         }
                         
                         if (resultado == "OK") {
@@ -117,17 +115,14 @@ fun PantallaPrincipal() {
                             exoPlayer.prepare()
                             exoPlayer.play()
                         } else {
-                            mensajeEstado = resultado // Aquí veremos el error real
+                            mensajeEstado = resultado
                         }
                     }
                 } else {
                     conectado = false
                     mensajeEstado = "Transmisión detenida"
                     exoPlayer.stop()
-                    
-                    scope.launch(Dispatchers.IO) {
-                        shoutcast.disconnect()
-                    }
+                    scope.launch(Dispatchers.IO) { shoutcast.disconnect() }
                 }
             },
             modifier = Modifier.fillMaxWidth().height(60.dp),

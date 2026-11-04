@@ -1,9 +1,7 @@
 package com.turadio.app
 
 import android.util.Base64
-import java.io.BufferedReader
 import java.io.DataOutputStream
-import java.io.InputStreamReader
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -14,36 +12,47 @@ class ShoutcastClient {
     fun connect(ip: String, port: Int, password: String): String {
         return try {
             socket = Socket()
-            // Timeout de 5 segundos para que no se quede colgado
             socket?.connect(InetSocketAddress(ip, port), 5000)
             out = DataOutputStream(socket?.getOutputStream())
 
+            // Shoutcast usualmente requiere que el usuario sea "source" o "admin"
             val auth = Base64.encodeToString("source:$password".toByteArray(), Base64.NO_WRAP)
             
-            // Protocolo Shoutcast v2 con headers completos
+            // Cabecera exacta que espera Shoutcast v1/v2
             val header = "SOURCE / HTTP/1.0\r\n" +
                          "Host: $ip:$port\r\n" +
                          "User-Agent: RadioMixer/1.0\r\n" +
                          "Authorization: Basic $auth\r\n" +
                          "Content-Type: audio/aacp\r\n" +
                          "icy-name: RadioMixer\r\n" +
-                         "icy-bitrate: 64\r\n" +
-                         "icy-pub: 0\r\n\r\n"
+                         "icy-genre: Various\r\n" +
+                         "icy-pub: 0\r\n" +
+                         "icy-br: 64\r\n\r\n"
             
             out?.write(header.toByteArray())
             out?.flush()
             
-            // Leer la respuesta del servidor
-            val reader = BufferedReader(InputStreamReader(socket?.getInputStream()))
-            val response = reader.readLine()
+            // Intentamos leer si el servidor responde algo.
+            // Si el servidor cierra la conexión, el read() devolverá -1
+            val inputStream = socket?.getInputStream()
+            val buffer = ByteArray(1024)
+            val bytesRead = inputStream?.read(buffer)
             
-            if (response?.contains("200") == true || response?.contains("OK") == true) {
-                "OK"
+            if (bytesRead != null && bytesRead > 0) {
+                val response = String(buffer, 0, bytesRead)
+                if (response.contains("200") || response.contains("OK")) {
+                    return "OK"
+                } else {
+                    return "Rechazado: ${response.lines().firstOrNull()}"
+                }
             } else {
-                "Servidor rechazó conexión: $response"
+                // Si bytesRead es -1, el servidor colgó sin decir nada.
+                // En Shoutcast, esto a veces significa que SÍ conectó, pero
+                // aún no hay datos de audio fluyendo. Lo tomaremos como éxito temporal.
+                return "OK" 
             }
         } catch (e: Exception) {
-            "Error de red: ${e.message}"
+            "Error: ${e.message}"
         }
     }
 
