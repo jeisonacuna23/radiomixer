@@ -39,27 +39,30 @@ fun PantallaPrincipal() {
     var puerto by remember { mutableStateOf("8016") }
     var password by remember { mutableStateOf("") }
     
-    // Estado para la música
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
-
-    // Inicializar ExoPlayer (el motor de audio)
-    val exoPlayer = remember { ExoPlayer.Builder(context).build() }
     
-    // Liberar memoria si se cierra la app
+    // Estados del stream
+    var conectado by remember { mutableStateOf(false) }
+    val exoPlayer = remember { ExoPlayer.Builder(context).build() }
+    val shoutcast = remember { ShoutcastClient() }
+    val encoder = remember { AacEncoder() }
+    val scope = rememberCoroutineScope()
+
     DisposableEffect(Unit) {
-        onDispose { exoPlayer.release() }
+        onDispose { 
+            exoPlayer.release()
+            shoutcast.disconnect()
+            encoder.stop()
+        }
     }
 
-    // Selector de carpetas de Android
     val selectorCarpeta = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
-            // Permiso para leer la carpeta
             context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             val root = DocumentFile.fromTreeUri(context, it)
-            // Buscar solo archivos de audio
             val archivos = root?.listFiles()?.filter { file -> file.type?.startsWith("audio/") == true }
             listaCanciones = archivos?.map { file -> file.uri } ?: emptyList()
             mensajeEstado = "Canciones encontradas: ${listaCanciones.size}"
@@ -67,10 +70,7 @@ fun PantallaPrincipal() {
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Configuración SonicPanel", style = MaterialTheme.typography.titleLarge)
@@ -81,12 +81,12 @@ fun PantallaPrincipal() {
 
         Spacer(modifier = Modifier.height(10.dp))
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
-        Spacer(modifier = Modifier.height(10.dp))
+        
+        if (conectado) {
+            Text("ESTADO: 🔴 EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+        }
 
-        Button(
-            onClick = { selectorCarpeta.launch(null) },
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
             Text("Seleccionar Carpeta de Música")
         }
 
@@ -94,20 +94,42 @@ fun PantallaPrincipal() {
 
         Button(
             onClick = { 
-                // Reproducir la primera canción de la lista como prueba local
-                if (listaCanciones.isNotEmpty()) {
-                    val primeraCancion = listaCanciones.first()
-                    exoPlayer.setMediaItem(MediaItem.fromUri(primeraCancion))
-                    exoPlayer.prepare()
-                    exoPlayer.play()
-                    mensajeEstado = "Reproduciendo prueba local..."
+                if (listaCanciones.isEmpty()) {
+                    mensajeEstado = "¡Selecciona música primero!"
+                    return@Button
+                }
+                
+                if (!conectado) {
+                    // Conectar al servidor
+                    if (shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)) {
+                        conectado = true
+                        mensajeEstado = "Conectado al servidor"
+                        
+                        // Iniciar ExoPlayer con la primera canción
+                        exoPlayer.setMediaItem(MediaItem.fromUri(listaCanciones.first()))
+                        exoPlayer.prepare()
+                        exoPlayer.play()
+                        
+                        // Nota: En la Fase 5 conectaremos el audio real del ExoPlayer al Encoder
+                        // encoder.start { data, _ -> shoutcast.sendAudio(data) }
+                    } else {
+                        mensajeEstado = "Error al conectar. Revisa IP/Pass"
+                    }
                 } else {
-                    mensajeEstado = "¡Primero selecciona una carpeta!"
+                    // Desconectar
+                    conectado = false
+                    mensajeEstado = "Transmisión detenida"
+                    exoPlayer.stop()
+                    shoutcast.disconnect()
+                    encoder.stop()
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(60.dp)
+            modifier = Modifier.fillMaxWidth().height(60.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (conectado) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
         ) {
-            Text("PROBAR REPRODUCCIÓN LOCAL")
+            Text(if (conectado) "DETENER TRANSMISIÓN" else "INICIAR TRANSMISIÓN")
         }
     }
 }
