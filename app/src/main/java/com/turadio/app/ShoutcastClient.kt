@@ -8,8 +8,9 @@ import java.net.Socket
 class ShoutcastClient {
     private var socket: Socket? = null
     private var out: DataOutputStream? = null
+    var onConnectionLost: (() -> Unit)? = null
 
-    fun connect(ip: String, port: Int, password: String, mount: String): String {
+    fun connect(ip: String, port: Int, password: String): String {
         return try {
             socket = Socket()
             socket?.connect(InetSocketAddress(ip, port), 5000)
@@ -17,24 +18,21 @@ class ShoutcastClient {
 
             val auth = Base64.encodeToString("source:$password".toByteArray(), Base64.NO_WRAP)
             
-            // Aseguramos que el mountpoint empiece con "/"
-            val finalMount = if (mount.startsWith("/")) mount else "/$mount"
-            
-            val header = "SOURCE $finalMount HTTP/1.0\r\n" +
+            // LA CLAVE ESTÁ AQUÍ: Content-Type aacp, 64 kbps y icy-sid: 1
+            val header = "SOURCE / HTTP/1.0\r\n" +
                          "Host: $ip:$port\r\n" +
                          "User-Agent: RadioMixer/1.0\r\n" +
                          "Authorization: Basic $auth\r\n" +
-                         "Content-Type: audio/mpeg\r\n" + 
+                         "Content-Type: audio/aacp\r\n" +
                          "icy-name: RadioMixer\r\n" +
                          "icy-genre: Various\r\n" +
                          "icy-br: 64\r\n" +
+                         "icy-sid: 1\r\n" + 
                          "icy-pub: 0\r\n\r\n"
             
             out?.write(header.toByteArray())
             out?.flush()
             
-            // IMPORTANTE: Shoutcast no responde nada hasta que recibe audio.
-            // Si el socket no lanzó excepción, asumimos que el túnel está abierto.
             return "OK"
         } catch (e: Exception) {
             return "Error: ${e.message}"
@@ -45,7 +43,10 @@ class ShoutcastClient {
         try {
             out?.write(data)
             out?.flush()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            onConnectionLost?.invoke()
+            disconnect()
+        }
     }
 
     fun disconnect() {
