@@ -49,6 +49,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.0")
     implementation("androidx.media3:media3-session:1.3.0")
     
-    // Cliente HTTP para conectar a SonicPanel (ShoutCast)
+    // Cliente HTTP
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    
+    // Para guardar la configuración
+    implementation("androidx.datastore:datastore-preferences:1.1.0")
 }
