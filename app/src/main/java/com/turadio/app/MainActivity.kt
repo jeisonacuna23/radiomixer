@@ -44,6 +44,7 @@ fun PantallaPrincipal() {
     var ip by remember { mutableStateOf("radio.conectarservidor.com") }
     var puerto by remember { mutableStateOf("8016") }
     var password by remember { mutableStateOf("") }
+    var mountpoint by remember { mutableStateOf("/stream") } // Nuevo campo
     
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
@@ -59,7 +60,6 @@ fun PantallaPrincipal() {
         } 
     }
     
-    // FIX: El método en la versión 1.3.0 solo pide 3 parámetros
     val renderersFactory = remember {
         object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
@@ -74,9 +74,7 @@ fun PantallaPrincipal() {
         }
     }
 
-    val exoPlayer = remember { 
-        ExoPlayer.Builder(context, renderersFactory).build() 
-    }
+    val exoPlayer = remember { ExoPlayer.Builder(context, renderersFactory).build() }
 
     DisposableEffect(Unit) {
         onDispose { 
@@ -106,13 +104,14 @@ fun PantallaPrincipal() {
 
         OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto (8016)") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña de Stream") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = mountpoint, onValueChange = { mountpoint = it }, label = { Text("Mountpoint (/stream)") }, modifier = Modifier.fillMaxWidth())
 
         Spacer(modifier = Modifier.height(10.dp))
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
         
         if (conectado) {
-            Text("ESTADO: 🔴 EN VIVO (Enviando Audio)", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+            Text("ESTADO: 🔴 EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
         }
 
         Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
@@ -132,12 +131,12 @@ fun PantallaPrincipal() {
                     mensajeEstado = "Conectando..."
                     scope.launch {
                         val resultado = withContext(Dispatchers.IO) {
-                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password)
+                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, password, mountpoint)
                         }
                         
                         if (resultado == "OK") {
                             conectado = true
-                            mensajeEstado = "¡Conectado! Iniciando audio..."
+                            mensajeEstado = "¡Conectado! Transmitiendo a $mountpoint"
                             
                             encoder.start { aacBytes ->
                                 scope.launch(Dispatchers.IO) {
