@@ -53,21 +53,19 @@ fun PantallaPrincipal() {
     val encoder = remember { AacEncoder() }
     val scope = rememberCoroutineScope()
 
-    // 1. El procesador que atrapa el audio
     val captureProcessor = remember { 
         CaptureAudioProcessor { pcm -> 
             if (conectado) encoder.encode(pcm) 
         } 
     }
     
-    // 2. Inyectamos el procesador mediante la fábrica (Solución al error de GitHub)
+    // FIX: El método en la versión 1.3.0 solo pide 3 parámetros
     val renderersFactory = remember {
         object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
                 context: android.content.Context,
                 enableFloatOutput: Boolean,
-                enableAudioTrackPlaybackParams: Boolean,
-                enableOffload: Boolean
+                enableAudioTrackPlaybackParams: Boolean
             ): AudioSink? {
                 return DefaultAudioSink.Builder(context)
                     .setAudioProcessors(arrayOf(captureProcessor))
@@ -76,7 +74,6 @@ fun PantallaPrincipal() {
         }
     }
 
-    // 3. Creamos el ExoPlayer usando la fábrica
     val exoPlayer = remember { 
         ExoPlayer.Builder(context, renderersFactory).build() 
     }
