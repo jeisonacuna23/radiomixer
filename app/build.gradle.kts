@@ -33,6 +33,11 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
@@ -46,5 +51,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.documentfile:documentfile:1.0.1")
     
-    // FFmpeg ELIMINADO
+    // LA LIBRERÍA REAL DE JITPACK
+    implementation("com.github.arthenica.ffmpeg-kit:ffmpeg-kit-audio:v6.0-2")
 }
