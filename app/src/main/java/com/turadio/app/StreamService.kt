@@ -2,11 +2,13 @@ package com.turadio.app
 
 import android.app.*
 import android.content.Intent
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import kotlinx.coroutines.*
-import java.io.InputStream
+import java.nio.ByteBuffer
 
 class StreamService : Service() {
     private var serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -46,8 +48,7 @@ class StreamService : Service() {
                 )
 
                 shoutcastClient?.connectAndStream {
-                    // Una vez conectados (OK2), empezamos a leer el archivo
-                    enviarAudioPreCodificado(Uri.parse(uriString))
+                    enviarAudioNativo(Uri.parse(uriString))
                 }
 
             } catch (e: Exception) {
@@ -60,47 +61,69 @@ class StreamService : Service() {
         return START_STICKY
     }
 
-    private fun enviarAudioPreCodificado(uri: Uri) {
-        var inputStream: InputStream? = null
+    private fun enviarAudioNativo(uri: Uri) {
+        val extractor = MediaExtractor()
         try {
-            inputStream = contentResolver.openInputStream(uri)
-            if (inputStream == null) {
-                currentStatus = "No se pudo abrir el archivo"
+            // Abrimos el archivo usando el motor nativo de Android
+            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                extractor.setDataSource(pfd.fileDescriptor)
+            }
+
+            var audioTrackIndex = -1
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioTrackIndex = i
+                    break
+                }
+            }
+
+            if (audioTrackIndex < 0) {
+                currentStatus = "No se encontró audio en el archivo"
                 updateNotification(currentStatus)
                 return
             }
 
-            // 64 kbps = 8000 bytes por segundo.
-            // Leeremos bloques de 2048 bytes y dormiremos para mantener el ritmo.
-            val buffer = ByteArray(2048)
-            var bytesRead: Int
+            extractor.selectTrack(audioTrackIndex)
+            val buffer = ByteBuffer.allocate(65536) // Buffer amplio para frames
             
-            // Buffer inicial para que el servidor no se queje de "flujo vacío" al inicio
-            val preBuffer = ByteArray(16384) 
-            val preRead = inputStream.read(preBuffer)
-            if (preRead > 0) {
-                shoutcastClient?.sendAudio(preBuffer, preRead)
-            }
+            var bytesEnviadosTotales = 0L
+            val tiempoInicio = System.currentTimeMillis()
 
             while (shoutcastClient != null) {
-                bytesRead = inputStream.read(buffer)
-                if (bytesRead <= 0) {
+                val sampleSize = extractor.readSampleData(buffer, 0)
+                if (sampleSize < 0) {
                     currentStatus = "Fin de la canción"
                     updateNotification(currentStatus)
                     break
                 }
 
-                shoutcastClient?.sendAudio(buffer, bytesRead)
+                val audioData = ByteArray(sampleSize)
+                buffer.position(0)
+                buffer.get(audioData)
+
+                // Enviamos el frame MP3 exacto
+                shoutcastClient?.sendAudio(audioData, sampleSize)
+                bytesEnviadosTotales += sampleSize
+                extractor.advance()
+
+                // Control de tiempo real (Pacing)
+                // A 64kbps = 8000 bytes por segundo.
+                val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
+                val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
                 
-                // Pacing: 2048 bytes / 8000 bytes/seg = 0.256 segundos = 256 ms
-                Thread.sleep(256) 
+                val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
+                if (tiempoEspera > 0) {
+                    Thread.sleep(tiempoEspera.toLong())
+                }
             }
 
         } catch (e: Exception) {
             currentStatus = "Error al leer: ${e.message}"
             updateNotification(currentStatus)
         } finally {
-            try { inputStream?.close() } catch (e: Exception) {}
+            extractor.release()
             stopSelf()
         }
     }
@@ -120,7 +143,7 @@ class StreamService : Service() {
 
     private fun buildNotification(): Notification {
         return Notification.Builder(this, "RadioChannel")
-            .setContentTitle("RadioMixer (Modo Directo)")
+            .setContentTitle("RadioMixer (Modo Nativo)")
             .setContentText(currentStatus)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .build()
