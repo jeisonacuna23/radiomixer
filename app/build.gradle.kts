@@ -33,14 +33,9 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
-    // Esto evita que FFmpeg choque con otras librerías del sistema
     packaging {
         jniLibs {
-            pickFirsts += "**/libavcodec.so"
-            pickFirsts += "**/libavformat.so"
-            pickFirsts += "**/libavutil.so"
-            pickFirsts += "**/libswresample.so"
-            pickFirsts += "**/libswscale.so"
+            useLegacyPackaging = true
         }
     }
 }
@@ -56,5 +51,10 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.documentfile:documentfile:1.0.1")
     
+    // FFmpeg
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
+    
+    // Dependencias faltantes de smart-exception
+    implementation("com.arthenica:smart-exception-java:0.2.1")
+    implementation("com.arthenica:smart-exception-common:0.2.1")
 }
