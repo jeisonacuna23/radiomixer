@@ -51,6 +51,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.documentfile:documentfile:1.0.1")
     
-    // LA LIBRERÍA REAL DE JITPACK
-    implementation("com.github.arthenica.ffmpeg-kit:ffmpeg-kit-audio:v6.0-2")
+    // LA DEPENDENCIA REAL QUE SÍ ENCUENTRA GITHUB
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
 }
