@@ -1,23 +1,20 @@
 package com.turadio.app
 
 import android.app.*
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
-import kotlinx.coroutines.*
-import java.io.File
-import java.io.InputStream
-import java.net.ServerSocket
-import java.net.Socket
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 
 class StreamService : Service() {
-    private var serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var ffmpegSessionId: Long? = null
+    private var exoPlayer: ExoPlayer? = null
     private var shoutcastClient: ShoutcastClient? = null
+    private var encoder: AacEncoder? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -34,57 +31,53 @@ class StreamService : Service() {
 
         createNotificationChannel()
         val notification = Notification.Builder(this, "RadioChannel")
-            .setContentTitle("RadioMixer en Vivo")
-            .setContentText("Transmitiendo a SonicPanel...")
+            .setContentTitle("RadioMixer en Vivo (AAC)")
+            .setContentText("Conectando a SonicPanel...")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .build()
-
         startForeground(1, notification)
 
-        serviceScope.launch {
-            try {
-                val tempFile = File(cacheDir, "audio_temp.mp3")
-                contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
-                    tempFile.outputStream().use { output -> input.copyTo(output) }
-                }
+        // 1. Iniciar Encoder
+        encoder = AacEncoder()
+        encoder?.start { aacData ->
+            shoutcastClient?.sendAudio(aacData)
+        }
 
-                val localServer = ServerSocket(0)
-                val localPort = localServer.localPort
-                var ffmpegSocket: Socket? = null
-
-                // Forzamos CBR a 64kbps estricto
-                val cmd = "-re -i \"${tempFile.absolutePath}\" -c:a libmp3lame -b:a 64k -minrate 64k -maxrate 64k -bufsize 128k -ar 44100 -ac 2 -f mp3 tcp://127.0.0.1:$localPort"
-                
-                val session = FFmpegKit.executeAsync(cmd) { session ->
-                    if (!ReturnCode.isSuccess(session.returnCode)) {
-                        stopSelf()
-                    }
-                }
-                ffmpegSessionId = session.sessionId
-
-                withContext(Dispatchers.IO) {
-                    ffmpegSocket = localServer.accept()
-                }
-
-                val audioStream: InputStream = ffmpegSocket!!.getInputStream()
-                shoutcastClient = ShoutcastClient(ip, port, pass) { error ->
-                    stopSelf()
-                }
-                shoutcastClient?.connectAndStream(audioStream)
-
-            } catch (e: Exception) {
-                e.printStackTrace()
-                stopSelf()
+        // 2. Configurar ExoPlayer para que capture el audio
+        val captureProcessor = CaptureAudioProcessor { pcm ->
+            encoder?.encode(pcm)
+        }
+        
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: android.content.Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink? {
+                return DefaultAudioSink.Builder(context)
+                    .setAudioProcessors(arrayOf(captureProcessor))
+                    .build()
             }
+        }
+        exoPlayer = ExoPlayer.Builder(this, renderersFactory).build()
+
+        // 3. Conectar al 8017 y luego darle Play a la música
+        shoutcastClient = ShoutcastClient(ip, port, pass) { error ->
+            stopSelf()
+        }
+        shoutcastClient?.connectAndStream {
+            exoPlayer?.setMediaItem(MediaItem.fromUri(Uri.parse(uriString)))
+            exoPlayer?.prepare()
+            exoPlayer?.play()
         }
 
         return START_STICKY
     }
 
     override fun onDestroy() {
-        ffmpegSessionId?.let { FFmpegKit.cancel(it) }
+        exoPlayer?.release()
+        encoder?.stop()
         shoutcastClient?.disconnect()
-        serviceScope.cancel()
         super.onDestroy()
     }
 

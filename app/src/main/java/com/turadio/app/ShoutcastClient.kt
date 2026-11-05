@@ -13,22 +13,18 @@ class ShoutcastClient(
     private var socket: Socket? = null
     private var out: DataOutputStream? = null
     private var isStreaming = false
-    private var sendThread: Thread? = null
 
-    fun connectAndStream(audioInputStream: java.io.InputStream) {
+    fun connectAndStream(onConnected: () -> Unit) {
         isStreaming = true
         thread {
             try {
-                // 1. Conectar al puerto de fuente (8017)
                 socket = Socket(ip, port)
                 socket?.soTimeout = 10000
                 out = DataOutputStream(socket?.getOutputStream())
 
-                // 2. Enviar contraseña
                 out?.write("$password\r\n".toByteArray())
                 out?.flush()
 
-                // 3. Esperar respuesta OK2
                 val reader = socket?.getInputStream()?.bufferedReader()
                 var response = ""
                 while (isStreaming) {
@@ -43,29 +39,29 @@ class ShoutcastClient(
                     return@thread
                 }
 
-                // 4. Enviar cabeceras
+                // Cabeceras para AAC
                 val headers = "icy-name: RadioMixer\r\n" +
                               "icy-genre: Varios\r\n" +
                               "icy-br: 64\r\n" +
-                              "content-type: audio/mpeg\r\n\r\n"
+                              "content-type: audio/aacp\r\n\r\n"
                 out?.write(headers.toByteArray())
                 out?.flush()
+                
+                onConnected()
 
-                // 5. Enviar audio
-                val buffer = ByteArray(8192)
-                var bytesRead: Int
-                while (isStreaming) {
-                    bytesRead = audioInputStream.read(buffer)
-                    if (bytesRead > 0) {
-                        out?.write(buffer, 0, bytesRead)
-                        out?.flush()
-                    }
-                }
             } catch (e: Exception) {
-                if (isStreaming) onError("Error en conexión: ${e.message}")
-            } finally {
-                disconnect()
+                onError("Error: ${e.message}")
             }
+        }
+    }
+
+    fun sendAudio(data: ByteArray) {
+        if (!isStreaming) return
+        try {
+            out?.write(data)
+            out?.flush()
+        } catch (e: Exception) {
+            isStreaming = false
         }
     }
 

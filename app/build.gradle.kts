@@ -33,13 +33,6 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
-    
-    // ESTO ES LO QUE EVITA EL ERROR DE SEGURIDAD EN ANDROID 14
-    packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
-    }
 }
 
 dependencies {
@@ -53,6 +46,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.documentfile:documentfile:1.0.1")
     
-    // FFmpeg mantenido por la comunidad (Sí existe)
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
+    // Reproductor nativo de Android (el que da el ritmo perfecto)
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-common:1.3.1")
 }
