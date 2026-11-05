@@ -17,17 +17,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Nota: FFmpeg 8.x se inicializa solo, ya no requiere el comando init(this)
-        
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -42,15 +35,12 @@ class MainActivity : ComponentActivity() {
 fun PantallaPrincipal() {
     val context = LocalContext.current
     var ip by remember { mutableStateOf("radio.conectarservidor.com") }
-    var puerto by remember { mutableStateOf("8016") }
-    var usuario by remember { mutableStateOf("jeisonacuna2323") }
+    var puerto by remember { mutableStateOf("8017") } // Puerto correcto
     var password by remember { mutableStateOf("") }
     
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
-    var sessionId by remember { mutableStateOf<Long?>(null) }
-    val scope = rememberCoroutineScope()
 
     val selectorCarpeta = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -68,18 +58,17 @@ fun PantallaPrincipal() {
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Configuración SonicPanel (FFmpeg)", style = MaterialTheme.typography.titleLarge)
+        Text("Configuración SonicPanel", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = usuario, onValueChange = { usuario = it }, label = { Text("Usuario (Panel)") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
+        OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto (8017)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña (sin usuario)") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
 
         Spacer(modifier = Modifier.height(10.dp))
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
         
         if (conectado) {
-            Text("ESTADO: 🔴 EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+            Text("ESTADO: 🔴 EN VIVO (Servicio en 2do plano)", color = MaterialTheme.colorScheme.error)
         }
 
         Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
@@ -96,55 +85,22 @@ fun PantallaPrincipal() {
                 }
                 
                 if (!conectado) {
-                    conectado = true
-                    mensajeEstado = "Preparando audio..."
-                    
-                    val uriActual = listaCanciones.first()
-                    
-                    // MOVEMOS TODO A UN HILO SECUNDARIO PARA EVITAR EL CIERRE FORZOSO
-                    scope.launch(Dispatchers.IO) {
-                        val tempFile = java.io.File(context.cacheDir, "cancion_temporal.mp3")
-                        
-                        try {
-                            context.contentResolver.openInputStream(uriActual)?.use { input ->
-                                tempFile.outputStream().use { output ->
-                                    input.copyTo(output)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                mensajeEstado = "Error copiando archivo: ${e.message}"
-                                conectado = false
-                            }
-                            return@launch
-                        }
-
-                        // Comando FFmpeg
-                        val cmd = "-re -i \"${tempFile.absolutePath}\" -c:a libmp3lame -b:a 64k -f mp3 icecast://$usuario:$password@$ip:$puerto/stream/1"
-                        
-                        withContext(Dispatchers.Main) {
-                            mensajeEstado = "¡Conectando a SonicPanel!"
-                        }
-
-                        val session = FFmpegKit.executeAsync(cmd) { session ->
-                            val returnCode = session.returnCode
-                            scope.launch(Dispatchers.Main) {
-                                if (ReturnCode.isSuccess(returnCode)) {
-                                    mensajeEstado = "Transmisión finalizada."
-                                } else {
-                                    mensajeEstado = "Error FFmpeg: ${session.failStackTrace?.take(150)}"
-                                }
-                                conectado = false
-                            }
-                        }
-                        sessionId = session.sessionId
+                    val intent = Intent(context, StreamService::class.java).apply {
+                        putExtra("IP", ip)
+                        putExtra("PORT", puerto.toIntOrNull() ?: 8017)
+                        putExtra("PASS", password)
+                        putExtra("URI", listaCanciones.first().toString())
                     }
-                    
+                    context.startForegroundService(intent)
+                    conectado = true
+                    mensajeEstado = "Servicio iniciado. Revisa SonicPanel."
                 } else {
-                    // Detener transmisión
-                    sessionId?.let { FFmpegKit.cancel(it) }
+                    val intent = Intent(context, StreamService::class.java).apply {
+                        action = "STOP"
+                    }
+                    context.startService(intent)
                     conectado = false
-                    mensajeEstado = "Transmisión detenida"
+                    mensajeEstado = "Transmisión detenida."
                 }
             },
             modifier = Modifier.fillMaxWidth().height(60.dp),
