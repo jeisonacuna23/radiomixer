@@ -44,12 +44,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.media3:media3-exoplayer:1.3.0")
-    implementation("androidx.media3:media3-session:1.3.0")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("androidx.datastore:datastore-preferences:1.1.0")
-    implementation("androidx.documentfile:documentfile:1.0.1")
     
-    // NUEVO: Corrutinas para el streaming en segundo plano
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // El motor profesional FFmpeg para audio
+    implementation("com.arthenica:ffmpeg-kit-audio:6.0-2")
 }

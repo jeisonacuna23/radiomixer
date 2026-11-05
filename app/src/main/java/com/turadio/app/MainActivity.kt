@@ -17,14 +17,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.audio.AudioSink
-import androidx.media3.exoplayer.audio.DefaultAudioSink
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,53 +44,7 @@ fun PantallaPrincipal() {
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
-    
-    val shoutcast = remember { ShoutcastClient() }
-    val encoder = remember { AacEncoder() }
-    val scope = rememberCoroutineScope()
-
-    val captureProcessor = remember { 
-        CaptureAudioProcessor { pcm -> 
-            // El encoder procesa directo, SIN corrutinas nuevas
-            if (conectado) encoder.encode(pcm) 
-        } 
-    }
-    
-    val renderersFactory = remember {
-        object : DefaultRenderersFactory(context) {
-            override fun buildAudioSink(
-                context: android.content.Context,
-                enableFloatOutput: Boolean,
-                enableAudioTrackPlaybackParams: Boolean
-            ): AudioSink? {
-                return DefaultAudioSink.Builder(context)
-                    .setAudioProcessors(arrayOf(captureProcessor))
-                    .build()
-            }
-        }
-    }
-
-    val exoPlayer = remember { ExoPlayer.Builder(context, renderersFactory).build() }
-
-    DisposableEffect(conectado) {
-        shoutcast.onConnectionLost = {
-            scope.launch(Dispatchers.Main) {
-                conectado = false
-                mensajeEstado = "¡Conexión perdida por el servidor!"
-                exoPlayer.stop()
-                encoder.stop()
-            }
-        }
-        onDispose { }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { 
-            exoPlayer.release()
-            shoutcast.disconnect()
-            encoder.stop()
-        }
-    }
+    var sessionId by remember { mutableStateOf<Long?>(null) }
 
     val selectorCarpeta = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -114,7 +62,7 @@ fun PantallaPrincipal() {
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Configuración SonicPanel", style = MaterialTheme.typography.titleLarge)
+        Text("Configuración SonicPanel (FFmpeg)", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto") }, modifier = Modifier.fillMaxWidth())
@@ -123,8 +71,8 @@ fun PantallaPrincipal() {
         OutlinedTextField(
             value = password, 
             onValueChange = { password = it }, 
-            label = { Text("Contraseña de Stream") }, 
-            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Contraseña") }, 
+            modifier = Modifier.fillMaxWidth(), 
             visualTransformation = PasswordVisualTransformation()
         )
 
@@ -132,7 +80,7 @@ fun PantallaPrincipal() {
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
         
         if (conectado) {
-            Text("ESTADO: 🔴 EN VIVO (Enviando Audio)", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+            Text("ESTADO: 🔴 EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
         }
 
         Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
@@ -149,42 +97,60 @@ fun PantallaPrincipal() {
                 }
                 
                 if (!conectado) {
-                    mensajeEstado = "Conectando..."
-                    scope.launch {
-                        val resultado = withContext(Dispatchers.IO) {
-                            shoutcast.connect(ip, puerto.toIntOrNull() ?: 8016, usuario, password)
-                        }
-                        
-                        if (resultado == "OK") {
-                            conectado = true
-                            mensajeEstado = "¡Conectado! Iniciando audio..."
-                            
-                            // Ahora el encoder envía directo a la cola de Shoutcast
-                            encoder.start { aacBytes ->
-                                shoutcast.sendAudio(aacBytes)
-                            }
-                            
-                            exoPlayer.setMediaItem(MediaItem.fromUri(listaCanciones.first()))
-                            exoPlayer.prepare()
-                            exoPlayer.play()
-                        } else {
-                            mensajeEstado = resultado
-                        }
+                    conectado = true
+                    mensajeEstado = "Conectando con FFmpeg..."
+                    
+                    // FFmpeg necesita una ruta de archivo real, no un content:// de Android. 
+                    // Por eso copiamos la canción a la memoria temporal de la app.
+                    val uriActual = listaCanciones.first()
+                    val inputPath = copiarArchivoTemporal(context, uriActual)
+                    
+                    if (inputPath == null) {
+                        mensajeEstado = "Error: No se pudo leer el archivo de música"
+                        conectado = false
+                        return@Button
                     }
+
+                    // Comando FFmpeg: -re (velocidad real), libmp3lame (MP3), 64k, a Icecast/Shoutcast
+                    val cmd = "-re -i \"$inputPath\" -c:a libmp3lame -b:a 64k -f mp3 icecast://$usuario:$password@$ip:$puerto/"
+                    
+                    val session = FFmpegKit.executeAsync(cmd) { session ->
+                        // Cuando el proceso termina (o falla)
+                        if (ReturnCode.isSuccess(session.returnCode)) {
+                            mensajeEstado = "Transmisión finalizada."
+                        } else {
+                            mensajeEstado = "FFmpeg se detuvo: ${session.failStackTrace?.take(150)}..."
+                        }
+                        conectado = false
+                    }
+                    sessionId = session.sessionId
+                    mensajeEstado = "¡Conectando a SonicPanel!"
+                    
                 } else {
+                    // Detener transmisión
+                    sessionId?.let { FFmpegKit.cancel(it) }
                     conectado = false
-                    mensajeEstado = "Transmisión detenida"
-                    exoPlayer.stop()
-                    encoder.stop()
-                    shoutcast.disconnect()
+                    mensajeEstado = "Transmisión detenida por el usuario"
                 }
             },
             modifier = Modifier.fillMaxWidth().height(60.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (conectado) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-            )
+            colors = ButtonDefaults.buttonColors(containerColor = if (conectado) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
         ) {
             Text(if (conectado) "DETENER TRANSMISIÓN" else "INICIAR TRANSMISIÓN")
         }
+    }
+}
+
+// Función auxiliar para copiar el archivo y que FFmpeg lo pueda leer
+fun copiarArchivoTemporal(context: android.content.Context, uri: Uri): String? {
+    return try {
+        val inputStream = context.contentResolver.openInputStream(uri) ?: return null
+        val tempFile = java.io.File(context.cacheDir, "cancion_temporal.mp3")
+        tempFile.outputStream().use { output ->
+            inputStream.copyTo(output)
+        }
+        tempFile.absolutePath
+    } catch (e: Exception) {
+        null
     }
 }
