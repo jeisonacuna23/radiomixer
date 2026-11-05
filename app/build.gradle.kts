@@ -33,11 +33,6 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
-    packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
-    }
 }
 
 dependencies {
@@ -51,10 +46,5 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.documentfile:documentfile:1.0.1")
     
-    // FFmpeg
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
-    
-    // Dependencias faltantes de smart-exception
-    implementation("com.arthenica:smart-exception-java:0.2.1")
-    implementation("com.arthenica:smart-exception-common:0.2.1")
+    // FFmpeg ELIMINADO
 }

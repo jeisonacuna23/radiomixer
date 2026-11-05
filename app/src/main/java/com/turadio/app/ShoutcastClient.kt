@@ -1,7 +1,9 @@
 package com.turadio.app
 
+import android.media.MediaExtractor
 import java.io.DataOutputStream
 import java.net.Socket
+import java.nio.ByteBuffer
 import kotlin.concurrent.thread
 
 class ShoutcastClient(
@@ -13,22 +15,19 @@ class ShoutcastClient(
     private var socket: Socket? = null
     private var out: DataOutputStream? = null
     private var isStreaming = false
-    private var sendThread: Thread? = null
 
-    fun connectAndStream(audioInputStream: java.io.InputStream) {
+    fun connectAndStream(extractor: MediaExtractor, buffer: ByteBuffer) {
         isStreaming = true
         thread {
             try {
-                // 1. Conectar al puerto de fuente (8017)
                 socket = Socket(ip, port)
-                socket?.soTimeout = 10000 // 10s timeout
+                socket?.soTimeout = 10000
                 out = DataOutputStream(socket?.getOutputStream())
 
-                // 2. Enviar contraseña (SIN usuario)
+                // Handshake Shoutcast v1 (Puerto 8017)
                 out?.write("$password\r\n".toByteArray())
                 out?.flush()
 
-                // 3. Esperar respuesta OK2
                 val reader = socket?.getInputStream()?.bufferedReader()
                 var response = ""
                 while (isStreaming) {
@@ -43,7 +42,7 @@ class ShoutcastClient(
                     return@thread
                 }
 
-                // 4. Enviar cabeceras
+                // Enviar cabeceras
                 val headers = "icy-name: RadioMixer\r\n" +
                               "icy-genre: Varios\r\n" +
                               "icy-br: 64\r\n" +
@@ -51,19 +50,25 @@ class ShoutcastClient(
                 out?.write(headers.toByteArray())
                 out?.flush()
 
-                // 5. Enviar audio en tiempo real
-                val buffer = ByteArray(8192)
-                var bytesRead: Int
+                // Leer del MediaExtractor y enviar en tiempo real
                 while (isStreaming) {
-                    bytesRead = audioInputStream.read(buffer)
-                    if (bytesRead > 0) {
-                        out?.write(buffer, 0, bytesRead)
-                        out?.flush()
-                    }
+                    val sampleSize = extractor.readSampleData(buffer, 0)
+                    if (sampleSize < 0) break // Fin del archivo
+                    
+                    val audioData = ByteArray(sampleSize)
+                    buffer.position(0)
+                    buffer.get(audioData)
+                    
+                    out?.write(audioData)
+                    out?.flush()
+                    
+                    extractor.advance()
+                    // Pausa de 50ms para simular tiempo real (evita desbordar el servidor)
+                    Thread.sleep(50)
                 }
 
             } catch (e: Exception) {
-                if (isStreaming) onError("Error en conexión: ${e.message}")
+                if (isStreaming) onError("Error: ${e.message}")
             } finally {
                 disconnect()
             }

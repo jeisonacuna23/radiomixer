@@ -3,20 +3,16 @@ package com.turadio.app
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.*
-import java.io.File
-import java.io.InputStream
-import java.net.ServerSocket
-import java.net.Socket
+import java.nio.ByteBuffer
 
 class StreamService : Service() {
     private var serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var ffmpegSessionId: Long? = null
     private var shoutcastClient: ShoutcastClient? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -43,38 +39,31 @@ class StreamService : Service() {
 
         serviceScope.launch {
             try {
-                // Copiar archivo a caché local
-                val tempFile = File(cacheDir, "audio_temp.mp3")
-                contentResolver.openInputStream(Uri.parse(uriString))?.use { input ->
-                    tempFile.outputStream().use { output -> input.copyTo(output) }
-                }
+                val extractor = MediaExtractor()
+                contentResolver.openFileDescriptor(Uri.parse(uriString), "r")?.use { pfd ->
+                    extractor.setDataSource(pfd.fileDescriptor)
+                    
+                    var audioTrackIndex = -1
+                    for (i in 0 until extractor.trackCount) {
+                        val format = extractor.getTrackFormat(i)
+                        val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                        if (mime.startsWith("audio/")) {
+                            audioTrackIndex = i
+                            break
+                        }
+                    }
 
-                // Crear un socket local para que FFmpeg escriba el MP3
-                val localServer = ServerSocket(0)
-                val localPort = localServer.localPort
-                var ffmpegSocket: Socket? = null
-
-                // Lanzar FFmpeg en tiempo real
-                val cmd = "-re -i \"${tempFile.absolutePath}\" -c:a libmp3lame -b:a 64k -ac 1 -ar 44100 -f mp3 tcp://127.0.0.1:$localPort"
-                val session = FFmpegKit.executeAsync(cmd) { session ->
-                    if (!ReturnCode.isSuccess(session.returnCode)) {
-                        stopSelf()
+                    if (audioTrackIndex >= 0) {
+                        extractor.selectTrack(audioTrackIndex)
+                        val buffer = ByteBuffer.allocate(16384)
+                        
+                        // Conectar al Shoutcast (Handshake ya programado)
+                        shoutcastClient = ShoutcastClient(ip, port, pass) { error ->
+                            stopSelf()
+                        }
+                        shoutcastClient?.connectAndStream(extractor, buffer)
                     }
                 }
-                ffmpegSessionId = session.sessionId
-
-                // Aceptar la conexión de FFmpeg
-                withContext(Dispatchers.IO) {
-                    ffmpegSocket = localServer.accept()
-                }
-
-                // Conectar al Shoutcast y empezar a puentear el audio
-                val audioStream: InputStream = ffmpegSocket!!.getInputStream()
-                shoutcastClient = ShoutcastClient(ip, port, pass) { error ->
-                    stopSelf()
-                }
-                shoutcastClient?.connectAndStream(audioStream)
-
             } catch (e: Exception) {
                 e.printStackTrace()
                 stopSelf()
@@ -85,7 +74,6 @@ class StreamService : Service() {
     }
 
     override fun onDestroy() {
-        ffmpegSessionId?.let { FFmpegKit.cancel(it) }
         shoutcastClient?.disconnect()
         serviceScope.cancel()
         super.onDestroy()
