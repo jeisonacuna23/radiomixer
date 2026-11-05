@@ -44,7 +44,7 @@ fun PantallaPrincipal() {
     val context = LocalContext.current
     var ip by remember { mutableStateOf("radio.conectarservidor.com") }
     var puerto by remember { mutableStateOf("8016") }
-    var usuario by remember { mutableStateOf("jeisonacuna2323") } // NUEVO CAMPO
+    var usuario by remember { mutableStateOf("jeisonacuna2323") }
     var password by remember { mutableStateOf("") }
     
     var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
@@ -57,6 +57,7 @@ fun PantallaPrincipal() {
 
     val captureProcessor = remember { 
         CaptureAudioProcessor { pcm -> 
+            // El encoder procesa directo, SIN corrutinas nuevas
             if (conectado) encoder.encode(pcm) 
         } 
     }
@@ -81,7 +82,7 @@ fun PantallaPrincipal() {
         shoutcast.onConnectionLost = {
             scope.launch(Dispatchers.Main) {
                 conectado = false
-                mensajeEstado = "¡Conexión perdida!"
+                mensajeEstado = "¡Conexión perdida por el servidor!"
                 exoPlayer.stop()
                 encoder.stop()
             }
@@ -158,10 +159,9 @@ fun PantallaPrincipal() {
                             conectado = true
                             mensajeEstado = "¡Conectado! Iniciando audio..."
                             
+                            // Ahora el encoder envía directo a la cola de Shoutcast
                             encoder.start { aacBytes ->
-                                scope.launch(Dispatchers.IO) {
-                                    shoutcast.sendAudio(aacBytes)
-                                }
+                                shoutcast.sendAudio(aacBytes)
                             }
                             
                             exoPlayer.setMediaItem(MediaItem.fromUri(listaCanciones.first()))
@@ -176,7 +176,7 @@ fun PantallaPrincipal() {
                     mensajeEstado = "Transmisión detenida"
                     exoPlayer.stop()
                     encoder.stop()
-                    scope.launch(Dispatchers.IO) { shoutcast.disconnect() }
+                    shoutcast.disconnect()
                 }
             },
             modifier = Modifier.fillMaxWidth().height(60.dp),
