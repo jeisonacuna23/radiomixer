@@ -10,6 +10,7 @@
         android:allowBackup="true"
         android:label="RadioMixer"
         android:supportsRtl="true"
+        android:extractNativeLibs="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         
         <activity
