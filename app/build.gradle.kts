@@ -45,6 +45,9 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     
-    // DEPENDENCIA ACTUALIZADA: El fork mantenido por la comunidad
+    // LA LIBRERÍA QUE FALTABA (para leer tus carpetas)
+    implementation("androidx.documentfile:documentfile:1.0.1")
+    
+    // FFmpeg (que ya funcionó)
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
 }
