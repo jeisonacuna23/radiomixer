@@ -45,6 +45,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     
-    // El motor profesional FFmpeg para audio
-    implementation("com.arthenica:ffmpeg-kit-audio:6.0-2")
+    // La versión rescatada por la comunidad
+    implementation("com.github.tanersener:ffmpeg-kit-audio:v6.0-2")
 }
