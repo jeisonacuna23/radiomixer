@@ -52,7 +52,7 @@ class StreamService : Service() {
                 val localPort = localServer.localPort
                 var ffmpegSocket: Socket? = null
 
-                // EL CAMBIO ESTÁ AQUÍ: Forzamos CBR a 64kbps estricto
+                // Forzamos CBR a 64kbps estricto
                 val cmd = "-re -i \"${tempFile.absolutePath}\" -c:a libmp3lame -b:a 64k -minrate 64k -maxrate 64k -bufsize 128k -ar 44100 -ac 2 -f mp3 tcp://127.0.0.1:$localPort"
                 
                 val session = FFmpegKit.executeAsync(cmd) { session ->
