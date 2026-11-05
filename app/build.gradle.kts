@@ -45,6 +45,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     
-    // La versión rescatada por la comunidad
-    implementation("com.github.tanersener:ffmpeg-kit-audio:v6.0-2")
+    // EL NOMBRE CORREGIDO: com.github.tanersener.ffmpeg-kit
+    implementation("com.github.tanersener.ffmpeg-kit:ffmpeg-kit-audio:6.0-2")
 }
