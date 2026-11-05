@@ -18,7 +18,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -27,8 +26,7 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Inicializar FFmpeg de forma segura
-        FFmpegKitConfig.init(this)
+        // Nota: FFmpeg 8.x se inicializa solo, ya no requiere el comando init(this)
         
         setContent {
             MaterialTheme {
@@ -121,7 +119,7 @@ fun PantallaPrincipal() {
                             return@launch
                         }
 
-                        // Comando FFmpeg (usando el formato y ruta que nos funcionó)
+                        // Comando FFmpeg
                         val cmd = "-re -i \"${tempFile.absolutePath}\" -c:a libmp3lame -b:a 64k -f mp3 icecast://$usuario:$password@$ip:$puerto/stream/1"
                         
                         withContext(Dispatchers.Main) {
