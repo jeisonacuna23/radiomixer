@@ -18,11 +18,18 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Inicializar FFmpeg de forma segura
+        FFmpegKitConfig.init(this)
+        
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -45,6 +52,7 @@ fun PantallaPrincipal() {
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
     var sessionId by remember { mutableStateOf<Long?>(null) }
+    val scope = rememberCoroutineScope()
 
     val selectorCarpeta = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -67,14 +75,7 @@ fun PantallaPrincipal() {
         OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = usuario, onValueChange = { usuario = it }, label = { Text("Usuario (Panel)") }, modifier = Modifier.fillMaxWidth())
-        
-        OutlinedTextField(
-            value = password, 
-            onValueChange = { password = it }, 
-            label = { Text("Contraseña") }, 
-            modifier = Modifier.fillMaxWidth(), 
-            visualTransformation = PasswordVisualTransformation()
-        )
+        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
 
         Spacer(modifier = Modifier.height(10.dp))
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
@@ -98,39 +99,54 @@ fun PantallaPrincipal() {
                 
                 if (!conectado) {
                     conectado = true
-                    mensajeEstado = "Conectando con FFmpeg..."
+                    mensajeEstado = "Preparando audio..."
                     
-                    // FFmpeg necesita una ruta de archivo real, no un content:// de Android. 
-                    // Por eso copiamos la canción a la memoria temporal de la app.
                     val uriActual = listaCanciones.first()
-                    val inputPath = copiarArchivoTemporal(context, uriActual)
                     
-                    if (inputPath == null) {
-                        mensajeEstado = "Error: No se pudo leer el archivo de música"
-                        conectado = false
-                        return@Button
-                    }
-
-                    // Comando FFmpeg: -re (velocidad real), libmp3lame (MP3), 64k, a Icecast/Shoutcast
-                    val cmd = "-re -i \"$inputPath\" -c:a libmp3lame -b:a 64k -f mp3 icecast://$usuario:$password@$ip:$puerto/"
-                    
-                    val session = FFmpegKit.executeAsync(cmd) { session ->
-                        // Cuando el proceso termina (o falla)
-                        if (ReturnCode.isSuccess(session.returnCode)) {
-                            mensajeEstado = "Transmisión finalizada."
-                        } else {
-                            mensajeEstado = "FFmpeg se detuvo: ${session.failStackTrace?.take(150)}..."
+                    // MOVEMOS TODO A UN HILO SECUNDARIO PARA EVITAR EL CIERRE FORZOSO
+                    scope.launch(Dispatchers.IO) {
+                        val tempFile = java.io.File(context.cacheDir, "cancion_temporal.mp3")
+                        
+                        try {
+                            context.contentResolver.openInputStream(uriActual)?.use { input ->
+                                tempFile.outputStream().use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                mensajeEstado = "Error copiando archivo: ${e.message}"
+                                conectado = false
+                            }
+                            return@launch
                         }
-                        conectado = false
+
+                        // Comando FFmpeg (usando el formato y ruta que nos funcionó)
+                        val cmd = "-re -i \"${tempFile.absolutePath}\" -c:a libmp3lame -b:a 64k -f mp3 icecast://$usuario:$password@$ip:$puerto/stream/1"
+                        
+                        withContext(Dispatchers.Main) {
+                            mensajeEstado = "¡Conectando a SonicPanel!"
+                        }
+
+                        val session = FFmpegKit.executeAsync(cmd) { session ->
+                            val returnCode = session.returnCode
+                            scope.launch(Dispatchers.Main) {
+                                if (ReturnCode.isSuccess(returnCode)) {
+                                    mensajeEstado = "Transmisión finalizada."
+                                } else {
+                                    mensajeEstado = "Error FFmpeg: ${session.failStackTrace?.take(150)}"
+                                }
+                                conectado = false
+                            }
+                        }
+                        sessionId = session.sessionId
                     }
-                    sessionId = session.sessionId
-                    mensajeEstado = "¡Conectando a SonicPanel!"
                     
                 } else {
                     // Detener transmisión
                     sessionId?.let { FFmpegKit.cancel(it) }
                     conectado = false
-                    mensajeEstado = "Transmisión detenida por el usuario"
+                    mensajeEstado = "Transmisión detenida"
                 }
             },
             modifier = Modifier.fillMaxWidth().height(60.dp),
@@ -138,19 +154,5 @@ fun PantallaPrincipal() {
         ) {
             Text(if (conectado) "DETENER TRANSMISIÓN" else "INICIAR TRANSMISIÓN")
         }
-    }
-}
-
-// Función auxiliar para copiar el archivo y que FFmpeg lo pueda leer
-fun copiarArchivoTemporal(context: android.content.Context, uri: Uri): String? {
-    return try {
-        val inputStream = context.contentResolver.openInputStream(uri) ?: return null
-        val tempFile = java.io.File(context.cacheDir, "cancion_temporal.mp3")
-        tempFile.outputStream().use { output ->
-            inputStream.copyTo(output)
-        }
-        tempFile.absolutePath
-    } catch (e: Exception) {
-        null
     }
 }
