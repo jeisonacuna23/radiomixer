@@ -64,17 +64,25 @@ class StreamService : Service() {
     private fun enviarAudioNativo(uri: Uri) {
         val extractor = MediaExtractor()
         try {
-            // Abrimos el archivo usando el motor nativo de Android
             contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                 extractor.setDataSource(pfd.fileDescriptor)
             }
 
             var audioTrackIndex = -1
+            var isAac = false
+            var sampleRate = 44100
+            var channelCount = 2
+            
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
                 if (mime.startsWith("audio/")) {
                     audioTrackIndex = i
+                    if (mime.contains("aac") || mime.contains("mp4a")) {
+                        isAac = true
+                        sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    }
                     break
                 }
             }
@@ -86,7 +94,7 @@ class StreamService : Service() {
             }
 
             extractor.selectTrack(audioTrackIndex)
-            val buffer = ByteBuffer.allocate(65536) // Buffer amplio para frames
+            val buffer = ByteBuffer.allocate(65536)
             
             var bytesEnviadosTotales = 0L
             val tiempoInicio = System.currentTimeMillis()
@@ -99,20 +107,22 @@ class StreamService : Service() {
                     break
                 }
 
-                val audioData = ByteArray(sampleSize)
+                var audioData = ByteArray(sampleSize)
                 buffer.position(0)
                 buffer.get(audioData)
 
-                // Enviamos el frame MP3 exacto
-                shoutcastClient?.sendAudio(audioData, sampleSize)
-                bytesEnviadosTotales += sampleSize
+                // Si el archivo es AAC, le agregamos el encabezado ADTS
+                if (isAac) {
+                    audioData = addAdtsHeader(audioData, sampleRate, channelCount)
+                }
+
+                shoutcastClient?.sendAudio(audioData, audioData.size)
+                bytesEnviadosTotales += audioData.size
                 extractor.advance()
 
-                // Control de tiempo real (Pacing)
-                // A 64kbps = 8000 bytes por segundo.
+                // Control de tiempo real (64kbps = 8000 bytes/segundo)
                 val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
                 val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
-                
                 val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
                 if (tiempoEspera > 0) {
                     Thread.sleep(tiempoEspera.toLong())
@@ -126,6 +136,27 @@ class StreamService : Service() {
             extractor.release()
             stopSelf()
         }
+    }
+
+    // Función que le pone la "etiqueta" que exige Shoutcast
+    private fun addAdtsHeader(aacData: ByteArray, sampleRate: Int, channelCount: Int): ByteArray {
+        val packetSize = aacData.size + 7
+        val adts = ByteArray(7)
+        val profile = 2 // AAC LC
+        val freqIdx = when (sampleRate) {
+            96000 -> 0; 88200 -> 1; 64000 -> 2; 48000 -> 3; 44100 -> 4; 32000 -> 5; 24000 -> 6; 22050 -> 7; 16000 -> 8; 12000 -> 9; 11025 -> 10; 8000 -> 11; 7350 -> 12; else -> 4
+        }
+        val chanCfg = channelCount
+
+        adts[0] = 0xFF.toByte()
+        adts[1] = 0xF1.toByte()
+        adts[2] = (((profile - 1) shl 6) + (freqIdx shl 2) + (chanCfg shr 2)).toByte()
+        adts[3] = (((chanCfg and 3) shl 6) + (packetSize shr 11)).toByte()
+        adts[4] = ((packetSize and 0x7FF) shr 3).toByte()
+        adts[5] = (((packetSize and 7) shl 5) + 0x1F).toByte()
+        adts[6] = 0xFC.toByte()
+
+        return adts + aacData
     }
 
     override fun onDestroy() {
@@ -143,7 +174,7 @@ class StreamService : Service() {
 
     private fun buildNotification(): Notification {
         return Notification.Builder(this, "RadioChannel")
-            .setContentTitle("RadioMixer (Modo Nativo)")
+            .setContentTitle("RadioMixer (Modo AAC)")
             .setContentText(currentStatus)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .build()

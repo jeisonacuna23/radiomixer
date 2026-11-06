@@ -44,14 +44,15 @@ class ShoutcastClient(
                 }
 
                 onStatus("Conectado. Enviando cabeceras...")
+                // AQUÍ CAMBIAMOS A AAC
                 val headers = "icy-name: RadioMixer\r\n" +
                               "icy-genre: Varios\r\n" +
                               "icy-br: 64\r\n" +
-                              "content-type: audio/mpeg\r\n\r\n"
+                              "content-type: audio/aacp\r\n\r\n"
                 out?.write(headers.toByteArray())
                 out?.flush()
                 
-                onStatus("¡En Vivo!")
+                onStatus("¡En Vivo (AAC)!")
                 onConnected()
 
             } catch (e: Exception) {
