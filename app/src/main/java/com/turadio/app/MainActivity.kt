@@ -10,18 +10,25 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -38,7 +45,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    PantallaPrincipal()
+                    AppRoot()
                 }
             }
         }
@@ -46,7 +53,107 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun PantallaPrincipal() {
+fun AppRoot() {
+    val context = LocalContext.current
+    val activity = context as ComponentActivity
+    val scope = rememberCoroutineScope()
+
+    var isLocked by remember { mutableStateOf(true) }
+    var savedPin by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    // Cargar el PIN guardado
+    LaunchedEffect(Unit) {
+        val prefs = context.dataStore.data.first()
+        savedPin = prefs[stringPreferencesKey("APP_PIN")]
+        isLoading = false
+        if (savedPin == null) {
+            isLocked = false // Primera vez, pedirá configurar PIN
+        }
+    }
+
+    // Intentar huella dactilar automáticamente al abrir
+    LaunchedEffect(isLocked, savedPin) {
+        if (isLocked && savedPin != null) {
+            val biometricManager = BiometricManager.from(context)
+            if (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS) {
+                val executor = ContextCompat.getMainExecutor(context)
+                val biometricPrompt = BiometricPrompt(activity, executor,
+                    object : BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                            super.onAuthenticationSucceeded(result)
+                            isLocked = false
+                        }
+                    })
+                val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("Desbloquear RadioMixer")
+                    .setNegativeButtonText("Usar PIN")
+                    .build()
+                biometricPrompt.authenticate(promptInfo)
+            }
+        }
+    }
+
+    if (isLoading) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    } else if (isLocked && savedPin != null) {
+        LockScreen(savedPin = savedPin!!) { isLocked = false }
+    } else {
+        PantallaPrincipal(
+            savedPin = savedPin,
+            onPinSet = { newPin ->
+                scope.launch {
+                    context.dataStore.edit { it[stringPreferencesKey("APP_PIN")] = newPin }
+                    savedPin = newPin
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun LockScreen(savedPin: String, onUnlock: () -> Unit) {
+    var pinInput by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(Icons.Default.Lock, contentDescription = "Bloqueado", modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Ingrese su PIN", style = MaterialTheme.typography.titleLarge)
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedTextField(
+            value = pinInput,
+            onValueChange = {
+                if (it.length <= 4) pinInput = it
+                error = false
+            },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            isError = error,
+            label = { Text("PIN de 4 dígitos") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (error) Text("PIN incorrecto", color = MaterialTheme.colorScheme.error)
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(
+            onClick = {
+                if (pinInput == savedPin) onUnlock() else error = true
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Desbloquear")
+        }
+    }
+}
+
+@Composable
+fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -59,7 +166,10 @@ fun PantallaPrincipal() {
     var conectado by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
 
-    // Cargar datos guardados
+    var showSettings by remember { mutableStateOf(false) }
+    var pinSetup by remember { mutableStateOf("") }
+    var showPinSetup by remember { mutableStateOf(savedPin == null) }
+
     LaunchedEffect(Unit) {
         val prefs = context.dataStore.data.first()
         ip = prefs[stringPreferencesKey("IP")] ?: "radio.conectarservidor.com"
@@ -119,30 +229,88 @@ fun PantallaPrincipal() {
         }
     }
 
+    // Diálogo para configurar PIN inicial
+    if (showPinSetup) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Configurar Seguridad") },
+            text = {
+                Column {
+                    Text("Cree un PIN de 4 dígitos para proteger la app.")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = pinSetup,
+                        onValueChange = { if (it.length <= 4) pinSetup = it },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        label = { Text("Nuevo PIN") }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (pinSetup.length == 4) {
+                            onPinSet(pinSetup)
+                            showPinSetup = false
+                        }
+                    }
+                ) { Text("Guardar") }
+            }
+        )
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("RadioMixer (Auto-DJ)", style = MaterialTheme.typography.titleLarge)
+        Text("RadioMixer", style = MaterialTheme.typography.titleLarge)
 
-        OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto (8017)") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
+        // TOGGLE DE AJUSTES (Servidor, Puerto, Contraseña)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Ajustes de Red", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { showSettings = !showSettings }) {
+                        Icon(if (showSettings) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = "Toggle")
+                    }
+                }
+                
+                if (showSettings) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
+                }
+            }
+        }
 
-        Spacer(modifier = Modifier.height(10.dp))
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
         
         if (conectado) {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("🔴 EN VIVO", color = MaterialTheme.colorScheme.error)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "En vivo", tint = MaterialTheme.colorScheme.error)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Sonando: $cancionActual", style = MaterialTheme.typography.titleMedium)
+                    Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge)
                 }
             }
         }
 
         Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.Folder, contentDescription = "Carpeta")
+            Spacer(modifier = Modifier.width(8.dp))
             Text("Seleccionar Carpeta de Música")
         }
 
@@ -165,11 +333,11 @@ fun PantallaPrincipal() {
                                 maxLines = 1
                             )
                             Row {
-                                TextButton(onClick = { moverArriba(index) }, enabled = index > 0) {
-                                    Text("⬆️", style = MaterialTheme.typography.titleLarge)
+                                IconButton(onClick = { moverArriba(index) }, enabled = index > 0) {
+                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) MaterialTheme.colorScheme.primary else Color.Gray)
                                 }
-                                TextButton(onClick = { moverAbajo(index) }, enabled = index < listaCanciones.size - 1) {
-                                    Text("⬇️", style = MaterialTheme.typography.titleLarge)
+                                IconButton(onClick = { moverAbajo(index) }, enabled = index < listaCanciones.size - 1) {
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaCanciones.size - 1) MaterialTheme.colorScheme.primary else Color.Gray)
                                 }
                             }
                         }
@@ -217,6 +385,8 @@ fun PantallaPrincipal() {
             modifier = Modifier.fillMaxWidth().height(60.dp),
             colors = ButtonDefaults.buttonColors(containerColor = if (conectado) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
         ) {
+            Icon(if (conectado) Icons.Default.Close else Icons.Default.PlayArrow, contentDescription = "Play/Stop")
+            Spacer(modifier = Modifier.width(8.dp))
             Text(if (conectado) "DETENER TRANSMISIÓN" else "INICIAR TRANSMISIÓN")
         }
     }

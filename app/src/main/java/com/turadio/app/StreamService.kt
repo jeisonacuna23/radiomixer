@@ -15,6 +15,7 @@ class StreamService : Service() {
     private var serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var shoutcastClient: ShoutcastClient? = null
     private var currentStatus = "Iniciando..."
+    private var currentSong = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -32,8 +33,8 @@ class StreamService : Service() {
         val uris = uriList.map { Uri.parse(it) }
 
         createNotificationChannel()
-        updateNotification("Conectando...")
-        startForeground(1, buildNotification())
+        updateNotification("Conectando...", "")
+        startForeground(1, buildNotification("Conectando...", ""))
 
         serviceScope.launch {
             try {
@@ -41,11 +42,11 @@ class StreamService : Service() {
                     ip, port, pass,
                     onStatus = { status ->
                         currentStatus = status
-                        updateNotification(status)
+                        updateNotification(status, currentSong)
                     },
                     onError = { error ->
                         currentStatus = "ERROR: $error"
-                        updateNotification(error)
+                        updateNotification(error, "")
                         stopSelf()
                     }
                 )
@@ -56,7 +57,7 @@ class StreamService : Service() {
 
             } catch (e: Exception) {
                 currentStatus = "Fallo: ${e.message}"
-                updateNotification(currentStatus)
+                updateNotification(currentStatus, "")
                 stopSelf()
             }
         }
@@ -69,9 +70,10 @@ class StreamService : Service() {
         while (shoutcastClient != null && uris.isNotEmpty()) {
             val uriActual = uris[index]
             
-            val nombreCancion = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
-            val intentUpdate = Intent("SONG_UPDATE").putExtra("SONG_NAME", nombreCancion)
+            currentSong = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
+            val intentUpdate = Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong)
             LocalBroadcastManager.getInstance(this).sendBroadcast(intentUpdate)
+            updateNotification("En Vivo", currentSong)
             
             enviarAudioNativo(uriActual)
 
@@ -175,16 +177,21 @@ class StreamService : Service() {
         }
     }
 
-    private fun buildNotification(): Notification {
-        return Notification.Builder(this, "RadioChannel")
-            .setContentTitle("RadioMixer (Auto-DJ)")
-            .setContentText(currentStatus)
+    private fun buildNotification(title: String, song: String): Notification {
+        val builder = Notification.Builder(this, "RadioChannel")
+            .setContentTitle("RadioMixer: $title")
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .build()
+
+        if (song.isNotEmpty()) {
+            builder.setContentText(song)
+        } else {
+            builder.setContentText(title)
+        }
+        return builder.build()
     }
 
-    private fun updateNotification(status: String) {
+    private fun updateNotification(title: String, song: String) {
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(1, buildNotification())
+        notificationManager.notify(1, buildNotification(title, song))
     }
 }
