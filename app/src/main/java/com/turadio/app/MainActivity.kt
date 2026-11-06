@@ -165,12 +165,14 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var password by remember { mutableStateOf("") }
     var minutosAutoStop by remember { mutableStateOf("") }
     
+    // 0 = Auto-DJ, 1 = Line-In
+    var modoMezcladora by remember { mutableStateOf(false) }
+
     var todosLosArchivos by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
     var listaReproduccion by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
     
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
-    var isMicActive by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
 
     var startTime by remember { mutableLongStateOf(0L) }
@@ -188,9 +190,16 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            val intent = Intent(context, StreamService::class.java).apply { action = "START_MIC" }
-            context.startService(intent)
-            isMicActive = true
+            val intent = Intent(context, StreamService::class.java).apply {
+                putExtra("IP", ip)
+                putExtra("PORT", puerto.toIntOrNull() ?: 8017)
+                putExtra("PASS", password)
+                putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
+                putExtra("LINE_IN_MODE", true)
+            }
+            context.startForegroundService(intent)
+            conectado = true
+            mensajeEstado = "Transmitiendo Entrada de Línea..."
         } else {
             mensajeEstado = "Permiso de micrófono denegado"
         }
@@ -238,7 +247,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 } else {
                     tiempoRestante = "Ilimitado"
                 }
-                
                 delay(1000L)
             }
         }
@@ -352,6 +360,34 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     ) {
         Text("RadioMixer", style = MaterialTheme.typography.titleLarge)
 
+        // SELECTOR DE MODO
+        if (!conectado) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { modoMezcladora = false },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Icon(Icons.Default.MusicNote, contentDescription = null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Auto-DJ")
+                }
+                Button(
+                    onClick = { modoMezcladora = true },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Icon(Icons.Default.SettingsInputComponent, contentDescription = null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Mezcladora")
+                }
+            }
+        }
+
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -405,19 +441,21 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge)
                     
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (trackDuration > 0 && !isMicActive) {
-                        LinearProgressIndicator(
-                            progress = { trackElapsed.toFloat() / trackDuration.toFloat() },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
-                            Text(formatTime(trackDuration), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+                    if (!modoMezcladora) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (trackDuration > 0) {
+                            LinearProgressIndicator(
+                                progress = { trackElapsed.toFloat() / trackDuration.toFloat() },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+                                Text(formatTime(trackDuration), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+                            }
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
-                    } else if (!isMicActive) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
 
                     Divider(modifier = Modifier.padding(vertical = 8.dp))
@@ -432,102 +470,84 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                             Text(tiempoRestante, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    // BOTÓN DE MICRÓFONO
-                    Button(
-                        onClick = {
-                            if (!isMicActive) {
-                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                    val intent = Intent(context, StreamService::class.java).apply { action = "START_MIC" }
-                                    context.startService(intent)
-                                    isMicActive = true
-                                } else {
-                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
-                            } else {
-                                val intent = Intent(context, StreamService::class.java).apply { action = "STOP_MIC" }
-                                context.startService(intent)
-                                isMicActive = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isMicActive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary
-                        )
-                    ) {
-                        Icon(if (isMicActive) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = "Mic")
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (isMicActive) "APAGAR MICRÓFONO (Volver a Música)" else "HABLAR POR MICRÓFONO")
-                    }
                 }
             }
         }
 
-        Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Folder, contentDescription = "Carpeta")
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Seleccionar Carpeta de Música")
-        }
+        if (!modoMezcladora) {
+            Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Folder, contentDescription = "Carpeta")
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Seleccionar Carpeta de Música")
+            }
 
-        // ... Resto del catálogo y lista de reproducción (igual que antes) ...
-        if (todosLosArchivos.isNotEmpty() && !conectado) {
-            Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(
-                modifier = Modifier.heightIn(max = 250.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(todosLosArchivos) { cancion ->
-                    val isSelected = listaReproduccion.contains(cancion)
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = isSelected,
-                                onCheckedChange = { toggleSeleccion(cancion) }
-                            )
-                            Text(
-                                text = cancion.second,
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1
-                            )
+            if (todosLosArchivos.isNotEmpty() && !conectado) {
+                Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 250.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(todosLosArchivos) { cancion ->
+                        val isSelected = listaReproduccion.contains(cancion)
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isSelected,
+                                    onCheckedChange = { toggleSeleccion(cancion) }
+                                )
+                                Text(
+                                    text = cancion.second,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
 
-        if (listaReproduccion.isNotEmpty() && !conectado) {
-            Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(
-                modifier = Modifier.heightIn(max = 250.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                itemsIndexed(listaReproduccion) { index, cancion ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = cancion.second,
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1
-                            )
-                            Row {
-                                IconButton(onClick = { moverArriba(index) }, enabled = index > 0) {
-                                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) MaterialTheme.colorScheme.primary else Color.Gray)
-                                }
-                                IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1) {
-                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1) MaterialTheme.colorScheme.primary else Color.Gray)
+            if (listaReproduccion.isNotEmpty() && !conectado) {
+                Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 250.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    itemsIndexed(listaReproduccion) { index, cancion ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = cancion.second,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1
+                                )
+                                Row {
+                                    IconButton(onClick = { moverArriba(index) }, enabled = index > 0) {
+                                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) MaterialTheme.colorScheme.primary else Color.Gray)
+                                    }
+                                    IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1) {
+                                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1) MaterialTheme.colorScheme.primary else Color.Gray)
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
+        } else if (!conectado) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.SettingsInputComponent, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.secondary)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -536,36 +556,51 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
         Button(
             onClick = { 
-                if (listaReproduccion.isEmpty()) {
-                    mensajeEstado = "Selecciona al menos una canción"
-                    return@Button
-                }
-                
                 if (!conectado) {
-                    scope.launch {
-                        context.dataStore.edit { settings ->
-                            settings[stringPreferencesKey("IP")] = ip
-                            settings[stringPreferencesKey("PORT")] = puerto
-                            settings[stringPreferencesKey("PASS")] = password
+                    if (modoMezcladora) {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                            val intent = Intent(context, StreamService::class.java).apply {
+                                putExtra("IP", ip)
+                                putExtra("PORT", puerto.toIntOrNull() ?: 8017)
+                                putExtra("PASS", password)
+                                putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
+                                putExtra("LINE_IN_MODE", true)
+                            }
+                            context.startForegroundService(intent)
+                            conectado = true
+                            mensajeEstado = "Transmitiendo Entrada de Línea..."
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
-                        
-                        val intent = Intent(context, StreamService::class.java).apply {
-                            putExtra("IP", ip)
-                            putExtra("PORT", puerto.toIntOrNull() ?: 8017)
-                            putExtra("PASS", password)
-                            putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
-                            putStringArrayListExtra("URIS", ArrayList(listaReproduccion.map { it.first.toString() }))
+                    } else {
+                        if (listaReproduccion.isEmpty()) {
+                            mensajeEstado = "Selecciona al menos una canción"
+                            return@Button
                         }
-                        context.startForegroundService(intent)
-                        conectado = true
-                        isMicActive = false
-                        mensajeEstado = "Transmitiendo..."
+                        scope.launch {
+                            context.dataStore.edit { settings ->
+                                settings[stringPreferencesKey("IP")] = ip
+                                settings[stringPreferencesKey("PORT")] = puerto
+                                settings[stringPreferencesKey("PASS")] = password
+                            }
+                            
+                            val intent = Intent(context, StreamService::class.java).apply {
+                                putExtra("IP", ip)
+                                putExtra("PORT", puerto.toIntOrNull() ?: 8017)
+                                putExtra("PASS", password)
+                                putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
+                                putExtra("LINE_IN_MODE", false)
+                                putStringArrayListExtra("URIS", ArrayList(listaReproduccion.map { it.first.toString() }))
+                            }
+                            context.startForegroundService(intent)
+                            conectado = true
+                            mensajeEstado = "Transmitiendo Auto-DJ..."
+                        }
                     }
                 } else {
                     val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
                     context.startService(intent)
                     conectado = false
-                    isMicActive = false
                     mensajeEstado = "Transmisión detenida."
                 }
             },
