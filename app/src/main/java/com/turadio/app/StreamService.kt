@@ -2,6 +2,7 @@ package com.turadio.app
 
 import android.app.*
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.*
 import android.net.Uri
 import android.os.Build
@@ -18,7 +19,6 @@ class StreamService : Service() {
     private var startTime = 0L
     private var timeoutMinutes = 0
     
-    // Variables para el micrófono
     private var isMicActive = false
     private var micJob: Job? = null
 
@@ -33,6 +33,11 @@ class StreamService : Service() {
             "START_MIC" -> {
                 isMicActive = true
                 startMicrophone()
+                // ACTUALIZAR NOTIFICACIÓN CON TIPO MICRÓFONO (Android 14+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val notif = buildNotification("Micrófono en Vivo", "")
+                    startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                }
                 return START_STICKY
             }
             "STOP_MIC" -> {
@@ -53,7 +58,14 @@ class StreamService : Service() {
 
         createNotificationChannel()
         updateNotification("Conectando...", "")
-        startForeground(1, buildNotification("Conectando...", ""))
+        
+        // CORRECCIÓN ANDROID 14: Especificar el tipo de servicio
+        val initialNotif = buildNotification("Conectando...", "")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(1, initialNotif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        } else {
+            startForeground(1, initialNotif)
+        }
 
         if (timeoutMinutes > 0) {
             serviceScope.launch {
@@ -86,7 +98,6 @@ class StreamService : Service() {
                             .putExtra("TIMEOUT", timeoutMinutes)
                         LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
                         
-                        // Si no estamos en modo micrófono, reproducimos la lista
                         if (!isMicActive) {
                             reproducirPlaylist(uris)
                         }
@@ -103,7 +114,6 @@ class StreamService : Service() {
         return START_STICKY
     }
 
-    // --- LÓGICA DEL MICRÓFONO ---
     private fun startMicrophone() {
         if (micJob != null) return
         currentSong = "Micrófono en Vivo"
@@ -123,11 +133,8 @@ class StreamService : Service() {
                 minBufSize * 2
             )
 
-            if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-                return@launch
-            }
+            if (audioRecord.state != AudioRecord.STATE_INITIALIZED) return@launch
 
-            // Codificador AAC
             val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 2).apply {
                 setInteger(MediaFormat.KEY_BIT_RATE, 64000)
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -161,8 +168,6 @@ class StreamService : Service() {
                             val aacData = ByteArray(bufferInfo.size)
                             outputBuffer.position(bufferInfo.offset)
                             outputBuffer.get(aacData)
-                            
-                            // Añadir cabecera ADTS para Shoutcast
                             val adtsData = addAdtsHeader(aacData, sampleRate, 2)
                             shoutcastClient?.sendAudio(adtsData, adtsData.size)
                         }
@@ -185,8 +190,6 @@ class StreamService : Service() {
         micJob?.cancel()
         micJob = null
     }
-
-    // --- FIN LÓGICA MICRÓFONO ---
 
     private fun reproducirPlaylist(uris: List<Uri>) {
         var index = 0
