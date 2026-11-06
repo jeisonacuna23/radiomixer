@@ -11,8 +11,8 @@ android {
         applicationId = "com.turadio.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2 // Subimos la versión para la actualización
-        versionName = "1.1"
+        versionCode = 3 // Subimos la versión para que Android sepa que es una actualización
+        versionName = "1.2"
     }
 
     signingConfigs {
@@ -55,4 +55,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    
+    // Nuevas librerías para Auto-DJ y guardado de datos
+    implementation("androidx.datastore:datastore-preferences:1.1.0")
+    implementation("androidx.localbroadcastmanager:localbroadcastmanager:1.1.0")
 }

@@ -7,6 +7,7 @@ import android.media.MediaFormat
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 
@@ -26,7 +27,9 @@ class StreamService : Service() {
         val ip = intent?.getStringExtra("IP") ?: return START_NOT_STICKY
         val port = intent?.getIntExtra("PORT", 8017) ?: 8017
         val pass = intent?.getStringExtra("PASS") ?: ""
-        val uriString = intent?.getStringExtra("URI") ?: return START_NOT_STICKY
+        val uriList = intent?.getStringArrayListExtra("URIS") ?: return START_NOT_STICKY
+
+        val uris = uriList.map { Uri.parse(it) }
 
         createNotificationChannel()
         updateNotification("Conectando...")
@@ -48,7 +51,7 @@ class StreamService : Service() {
                 )
 
                 shoutcastClient?.connectAndStream {
-                    enviarAudioNativo(Uri.parse(uriString))
+                    reproducirPlaylist(uris)
                 }
 
             } catch (e: Exception) {
@@ -59,6 +62,27 @@ class StreamService : Service() {
         }
 
         return START_STICKY
+    }
+
+    private fun reproducirPlaylist(uris: List<Uri>) {
+        var index = 0
+        // Bucle infinito para el Auto-DJ
+        while (shoutcastClient != null && uris.isNotEmpty()) {
+            val uriActual = uris[index]
+            
+            // Extraer el nombre del archivo para mostrarlo en la UI
+            val nombreCancion = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
+            val intentUpdate = Intent("SONG_UPDATE").putExtra("SONG_NAME", nombreCancion)
+            LocalBroadcastManager.getInstance(this).sendBroadcast(intentUpdate)
+            
+            enviarAudioNativo(uriActual)
+
+            // Pasar a la siguiente canción (vuelve al inicio si llega al final)
+            index++
+            if (index >= uris.size) {
+                index = 0
+            }
+        }
     }
 
     private fun enviarAudioNativo(uri: Uri) {
@@ -87,11 +111,7 @@ class StreamService : Service() {
                 }
             }
 
-            if (audioTrackIndex < 0) {
-                currentStatus = "No se encontró audio en el archivo"
-                updateNotification(currentStatus)
-                return
-            }
+            if (audioTrackIndex < 0) return
 
             extractor.selectTrack(audioTrackIndex)
             val buffer = ByteBuffer.allocate(65536)
@@ -101,17 +121,12 @@ class StreamService : Service() {
 
             while (shoutcastClient != null) {
                 val sampleSize = extractor.readSampleData(buffer, 0)
-                if (sampleSize < 0) {
-                    currentStatus = "Fin de la canción"
-                    updateNotification(currentStatus)
-                    break
-                }
+                if (sampleSize < 0) break // Fin de la canción
 
                 var audioData = ByteArray(sampleSize)
                 buffer.position(0)
                 buffer.get(audioData)
 
-                // Si el archivo es AAC, le agregamos el encabezado ADTS
                 if (isAac) {
                     audioData = addAdtsHeader(audioData, sampleRate, channelCount)
                 }
@@ -120,7 +135,6 @@ class StreamService : Service() {
                 bytesEnviadosTotales += audioData.size
                 extractor.advance()
 
-                // Control de tiempo real (64kbps = 8000 bytes/segundo)
                 val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
                 val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
                 val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
@@ -130,19 +144,16 @@ class StreamService : Service() {
             }
 
         } catch (e: Exception) {
-            currentStatus = "Error al leer: ${e.message}"
-            updateNotification(currentStatus)
+            // Ignoramos el error para que pase a la siguiente canción
         } finally {
             extractor.release()
-            stopSelf()
         }
     }
 
-    // Función que le pone la "etiqueta" que exige Shoutcast
     private fun addAdtsHeader(aacData: ByteArray, sampleRate: Int, channelCount: Int): ByteArray {
         val packetSize = aacData.size + 7
         val adts = ByteArray(7)
-        val profile = 2 // AAC LC
+        val profile = 2
         val freqIdx = when (sampleRate) {
             96000 -> 0; 88200 -> 1; 64000 -> 2; 48000 -> 3; 44100 -> 4; 32000 -> 5; 24000 -> 6; 22050 -> 7; 16000 -> 8; 12000 -> 9; 11025 -> 10; 8000 -> 11; 7350 -> 12; else -> 4
         }
@@ -174,7 +185,7 @@ class StreamService : Service() {
 
     private fun buildNotification(): Notification {
         return Notification.Builder(this, "RadioChannel")
-            .setContentTitle("RadioMixer (Modo AAC)")
+            .setContentTitle("RadioMixer (Auto-DJ)")
             .setContentText(currentStatus)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .build()
