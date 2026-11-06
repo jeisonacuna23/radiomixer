@@ -1,9 +1,11 @@
 package com.turadio.app
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -168,21 +170,31 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
+    var isMicActive by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
 
-    // Relojes
     var startTime by remember { mutableLongStateOf(0L) }
     var timeoutMinutes by remember { mutableIntStateOf(0) }
     var tiempoAlAire by remember { mutableStateOf("00:00") }
     var tiempoRestante by remember { mutableStateOf("--:--") }
-
-    // Progreso de la Canción
     var trackElapsed by remember { mutableLongStateOf(0L) }
     var trackDuration by remember { mutableLongStateOf(0L) }
 
     var showSettings by remember { mutableStateOf(false) }
     var pinSetup by remember { mutableStateOf("") }
     var showPinSetup by remember { mutableStateOf(savedPin == null) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val intent = Intent(context, StreamService::class.java).apply { action = "START_MIC" }
+            context.startService(intent)
+            isMicActive = true
+        } else {
+            mensajeEstado = "Permiso de micrófono denegado"
+        }
+    }
 
     LaunchedEffect(Unit) {
         val prefs = context.dataStore.data.first()
@@ -238,7 +250,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 when (intent?.action) {
                     "SONG_UPDATE" -> {
                         cancionActual = intent.getStringExtra("SONG_NAME") ?: "Desconocida"
-                        trackElapsed = 0L // Reiniciar progreso para la nueva canción
+                        trackElapsed = 0L
                         trackDuration = 0L
                     }
                     "TIME_UPDATE" -> {
@@ -393,9 +405,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge)
                     
-                    // PROGRESO DE LA PISTA
                     Spacer(modifier = Modifier.height(8.dp))
-                    if (trackDuration > 0) {
+                    if (trackDuration > 0 && !isMicActive) {
                         LinearProgressIndicator(
                             progress = { trackElapsed.toFloat() / trackDuration.toFloat() },
                             modifier = Modifier.fillMaxWidth()
@@ -405,10 +416,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                             Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
                             Text(formatTime(trackDuration), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
                         }
-                    } else {
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                    } else if (!isMicActive) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
 
                     Divider(modifier = Modifier.padding(vertical = 8.dp))
@@ -423,6 +432,35 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                             Text(tiempoRestante, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // BOTÓN DE MICRÓFONO
+                    Button(
+                        onClick = {
+                            if (!isMicActive) {
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                    val intent = Intent(context, StreamService::class.java).apply { action = "START_MIC" }
+                                    context.startService(intent)
+                                    isMicActive = true
+                                } else {
+                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            } else {
+                                val intent = Intent(context, StreamService::class.java).apply { action = "STOP_MIC" }
+                                context.startService(intent)
+                                isMicActive = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isMicActive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary
+                        )
+                    ) {
+                        Icon(if (isMicActive) Icons.Default.MicOff else Icons.Default.Mic, contentDescription = "Mic")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(if (isMicActive) "APAGAR MICRÓFONO (Volver a Música)" else "HABLAR POR MICRÓFONO")
+                    }
                 }
             }
         }
@@ -433,6 +471,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             Text("Seleccionar Carpeta de Música")
         }
 
+        // ... Resto del catálogo y lista de reproducción (igual que antes) ...
         if (todosLosArchivos.isNotEmpty() && !conectado) {
             Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
             LazyColumn(
@@ -519,12 +558,14 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         }
                         context.startForegroundService(intent)
                         conectado = true
+                        isMicActive = false
                         mensajeEstado = "Transmitiendo..."
                     }
                 } else {
                     val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
                     context.startService(intent)
                     conectado = false
+                    isMicActive = false
                     mensajeEstado = "Transmisión detenida."
                 }
             },

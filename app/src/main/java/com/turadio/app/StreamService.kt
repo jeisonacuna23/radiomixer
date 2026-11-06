@@ -2,9 +2,7 @@ package com.turadio.app
 
 import android.app.*
 import android.content.Intent
-import android.media.MediaExtractor
-import android.media.MediaFormat
-import android.media.MediaMetadataRetriever
+import android.media.*
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
@@ -19,13 +17,29 @@ class StreamService : Service() {
     private var currentSong = ""
     private var startTime = 0L
     private var timeoutMinutes = 0
+    
+    // Variables para el micrófono
+    private var isMicActive = false
+    private var micJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "STOP") {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            "STOP" -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            "START_MIC" -> {
+                isMicActive = true
+                startMicrophone()
+                return START_STICKY
+            }
+            "STOP_MIC" -> {
+                isMicActive = false
+                stopMicrophone()
+                return START_STICKY
+            }
         }
 
         val ip = intent?.getStringExtra("IP") ?: return START_NOT_STICKY
@@ -50,26 +64,33 @@ class StreamService : Service() {
 
         serviceScope.launch {
             try {
-                shoutcastClient = ShoutcastClient(
-                    ip, port, pass,
-                    onStatus = { status ->
-                        currentStatus = status
-                        updateNotification(status, currentSong)
-                    },
-                    onError = { error ->
-                        currentStatus = "ERROR: $error"
-                        updateNotification(error, "")
-                        stopSelf()
+                if (shoutcastClient == null) {
+                    shoutcastClient = ShoutcastClient(
+                        ip, port, pass,
+                        onStatus = { status ->
+                            currentStatus = status
+                            updateNotification(status, currentSong)
+                        },
+                        onError = { error ->
+                            currentStatus = "ERROR: $error"
+                            updateNotification(error, "")
+                            stopSelf()
+                        }
+                    )
+                }
+
+                if (shoutcastClient != null && uris.isNotEmpty()) {
+                    shoutcastClient?.connectAndStream {
+                        val timeIntent = Intent("TIME_UPDATE")
+                            .putExtra("START_TIME", startTime)
+                            .putExtra("TIMEOUT", timeoutMinutes)
+                        LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
+                        
+                        // Si no estamos en modo micrófono, reproducimos la lista
+                        if (!isMicActive) {
+                            reproducirPlaylist(uris)
+                        }
                     }
-                )
-
-                shoutcastClient?.connectAndStream {
-                    val timeIntent = Intent("TIME_UPDATE")
-                        .putExtra("START_TIME", startTime)
-                        .putExtra("TIMEOUT", timeoutMinutes)
-                    LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
-
-                    reproducirPlaylist(uris)
                 }
 
             } catch (e: Exception) {
@@ -82,9 +103,94 @@ class StreamService : Service() {
         return START_STICKY
     }
 
+    // --- LÓGICA DEL MICRÓFONO ---
+    private fun startMicrophone() {
+        if (micJob != null) return
+        currentSong = "Micrófono en Vivo"
+        LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
+        
+        micJob = serviceScope.launch {
+            val sampleRate = 44100
+            val channelConfig = AudioFormat.CHANNEL_IN_STEREO
+            val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+            val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+
+            val audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                minBufSize * 2
+            )
+
+            if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
+                return@launch
+            }
+
+            // Codificador AAC
+            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 2).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, 64000)
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+            }
+            val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            codec.start()
+
+            audioRecord.startRecording()
+            val bufferInfo = MediaCodec.BufferInfo()
+
+            try {
+                while (isMicActive) {
+                    val pcmBuffer = ByteArray(minBufSize)
+                    val read = audioRecord.read(pcmBuffer, 0, pcmBuffer.size)
+                    if (read > 0) {
+                        val inputIndex = codec.dequeueInputBuffer(10000)
+                        if (inputIndex >= 0) {
+                            val inputBuffer = codec.getInputBuffer(inputIndex)
+                            inputBuffer?.clear()
+                            inputBuffer?.put(pcmBuffer, 0, read)
+                            codec.queueInputBuffer(inputIndex, 0, read, System.nanoTime() / 1000, 0)
+                        }
+                    }
+
+                    var outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+                    while (outputIndex >= 0) {
+                        val outputBuffer = codec.getOutputBuffer(outputIndex)
+                        if (outputBuffer != null && bufferInfo.size > 0) {
+                            val aacData = ByteArray(bufferInfo.size)
+                            outputBuffer.position(bufferInfo.offset)
+                            outputBuffer.get(aacData)
+                            
+                            // Añadir cabecera ADTS para Shoutcast
+                            val adtsData = addAdtsHeader(aacData, sampleRate, 2)
+                            shoutcastClient?.sendAudio(adtsData, adtsData.size)
+                        }
+                        codec.releaseOutputBuffer(outputIndex, false)
+                        outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                audioRecord.stop()
+                audioRecord.release()
+                codec.stop()
+                codec.release()
+            }
+        }
+    }
+
+    private fun stopMicrophone() {
+        micJob?.cancel()
+        micJob = null
+    }
+
+    // --- FIN LÓGICA MICRÓFONO ---
+
     private fun reproducirPlaylist(uris: List<Uri>) {
         var index = 0
-        while (shoutcastClient != null && uris.isNotEmpty()) {
+        while (shoutcastClient != null && uris.isNotEmpty() && !isMicActive) {
             val uriActual = uris[index]
             
             currentSong = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
@@ -92,7 +198,6 @@ class StreamService : Service() {
             LocalBroadcastManager.getInstance(this).sendBroadcast(intentUpdate)
             updateNotification("En Vivo", currentSong)
 
-            // OBTENER DURACIÓN DE LA PISTA
             val retriever = MediaMetadataRetriever()
             var trackDurationSeconds = 0L
             try {
@@ -100,11 +205,9 @@ class StreamService : Service() {
                 val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L
                 trackDurationSeconds = durationMs / 1000
             } catch (e: Exception) {
-                // Ignorar si falla
             } finally {
                 retriever.release()
             }
-            // Avisamos a la UI la duración de la canción actual
             LocalBroadcastManager.getInstance(this).sendBroadcast(
                 Intent("TRACK_DURATION_UPDATE").putExtra("DURATION", trackDurationSeconds)
             )
@@ -150,9 +253,9 @@ class StreamService : Service() {
             val buffer = ByteBuffer.allocate(65536)
             var bytesEnviadosTotales = 0L
             val tiempoInicio = System.currentTimeMillis()
-            var lastBroadcastedSecond = -1L // Para no saturar la UI enviando cada milisegundo
+            var lastBroadcastedSecond = -1L
 
-            while (shoutcastClient != null) {
+            while (shoutcastClient != null && !isMicActive) {
                 val sampleSize = extractor.readSampleData(buffer, 0)
                 if (sampleSize < 0) break
 
@@ -168,7 +271,6 @@ class StreamService : Service() {
                 bytesEnviadosTotales += audioData.size
                 extractor.advance()
 
-                // Calcular progreso de la canción (8000 bytes = 1 segundo a 64kbps)
                 val currentTrackSecond = bytesEnviadosTotales / 8000
                 if (currentTrackSecond > lastBroadcastedSecond) {
                     lastBroadcastedSecond = currentTrackSecond
@@ -209,6 +311,8 @@ class StreamService : Service() {
     }
 
     override fun onDestroy() {
+        isMicActive = false
+        stopMicrophone()
         shoutcastClient?.disconnect()
         serviceScope.cancel()
         super.onDestroy()
