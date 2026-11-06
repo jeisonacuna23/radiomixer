@@ -11,12 +11,22 @@ android {
         applicationId = "com.turadio.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2 // Subimos la versión para la actualización
+        versionName = "1.1"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("release.keystore")
+            storePassword = "Jeison.2milcinco"
+            keyAlias = "muro"
+            keyPassword = "Jeison.2milcinco"
+        }
     }
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
         }
     }
