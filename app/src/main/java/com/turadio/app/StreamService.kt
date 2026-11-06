@@ -28,6 +28,7 @@ class StreamService : Service() {
         val ip = intent?.getStringExtra("IP") ?: return START_NOT_STICKY
         val port = intent?.getIntExtra("PORT", 8017) ?: 8017
         val pass = intent?.getStringExtra("PASS") ?: ""
+        val timeoutMinutes = intent?.getIntExtra("TIMEOUT_MINUTES", 0) ?: 0
         val uriList = intent?.getStringArrayListExtra("URIS") ?: return START_NOT_STICKY
 
         val uris = uriList.map { Uri.parse(it) }
@@ -35,6 +36,14 @@ class StreamService : Service() {
         createNotificationChannel()
         updateNotification("Conectando...", "")
         startForeground(1, buildNotification("Conectando...", ""))
+
+        // TEMPORIZADOR AUTO-STOP
+        if (timeoutMinutes > 0) {
+            serviceScope.launch {
+                delay(timeoutMinutes * 60 * 1000L)
+                stopSelf()
+            }
+        }
 
         serviceScope.launch {
             try {

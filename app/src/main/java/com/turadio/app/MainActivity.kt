@@ -13,6 +13,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.FragmentActivity
@@ -40,7 +42,6 @@ import kotlinx.coroutines.launch
 
 val Context.dataStore by preferencesDataStore(name = "settings")
 
-// CORRECCIÓN: Heredar de FragmentActivity en lugar de ComponentActivity
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,9 +69,7 @@ fun AppRoot() {
         val prefs = context.dataStore.data.first()
         savedPin = prefs[stringPreferencesKey("APP_PIN")]
         isLoading = false
-        if (savedPin == null) {
-            isLocked = false
-        }
+        if (savedPin == null) isLocked = false
     }
 
     LaunchedEffect(isLocked, savedPin) {
@@ -95,9 +94,7 @@ fun AppRoot() {
     }
 
     if (isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     } else if (isLocked && savedPin != null) {
         LockScreen(savedPin = savedPin!!) { isLocked = false }
     } else {
@@ -141,12 +138,7 @@ fun LockScreen(savedPin: String, onUnlock: () -> Unit) {
         )
         if (error) Text("PIN incorrecto", color = MaterialTheme.colorScheme.error)
         Spacer(modifier = Modifier.height(16.dp))
-        Button(
-            onClick = {
-                if (pinInput == savedPin) onUnlock() else error = true
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        Button(onClick = { if (pinInput == savedPin) onUnlock() else error = true }, modifier = Modifier.fillMaxWidth()) {
             Text("Desbloquear")
         }
     }
@@ -160,8 +152,12 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var ip by remember { mutableStateOf("radio.conectarservidor.com") }
     var puerto by remember { mutableStateOf("8017") }
     var password by remember { mutableStateOf("") }
+    var minutosAutoStop by remember { mutableStateOf("") }
     
-    var listaCanciones by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
+    // Listas de estado
+    var todosLosArchivos by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
+    var listaReproduccion by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
+    
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
@@ -181,8 +177,17 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             val uri = Uri.parse(savedFolderUri)
             val root = DocumentFile.fromTreeUri(context, uri)
             val archivos = root?.listFiles()?.filter { file -> file.type?.startsWith("audio/") == true }
-            listaCanciones = archivos?.map { Pair(it.uri, it.name ?: "Canción") } ?: emptyList()
-            mensajeEstado = "Carpeta cargada: ${listaCanciones.size} canciones"
+            todosLosArchivos = archivos?.map { Pair(it.uri, it.name ?: "Canción") } ?: emptyList()
+            
+            // Recuperar las canciones que ya estaban seleccionadas
+            val savedUris = prefs[stringSetPreferencesKey("PLAYLIST_URIS")] ?: emptySet()
+            if (savedUris.isNotEmpty()) {
+                listaReproduccion = todosLosArchivos.filter { savedUris.contains(it.first.toString()) }
+            } else {
+                listaReproduccion = todosLosArchivos // Si es la primera vez, seleccionar todas
+            }
+            
+            mensajeEstado = "Carpeta cargada: ${todosLosArchivos.size} canciones"
         }
     }
 
@@ -206,26 +211,42 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             }
             val root = DocumentFile.fromTreeUri(context, it)
             val archivos = root?.listFiles()?.filter { file -> file.type?.startsWith("audio/") == true }
-            listaCanciones = archivos?.map { file -> Pair(file.uri, file.name ?: "Canción") } ?: emptyList()
-            mensajeEstado = "Canciones encontradas: ${listaCanciones.size}"
+            todosLosArchivos = archivos?.map { file -> Pair(file.uri, file.name ?: "Canción") } ?: emptyList()
+            listaReproduccion = todosLosArchivos // Por defecto seleccionamos todas al elegir carpeta nueva
+            mensajeEstado = "Canciones encontradas: ${todosLosArchivos.size}"
+        }
+    }
+
+    // Lógica para marcar/desmarcar (Catálogo)
+    fun toggleSeleccion(cancion: Pair<Uri, String>) {
+        if (listaReproduccion.contains(cancion)) {
+            listaReproduccion = listaReproduccion - cancion
+        } else {
+            listaReproduccion = listaReproduccion + cancion
+        }
+        // Guardar en DataStore
+        scope.launch {
+            context.dataStore.edit { settings ->
+                settings[stringSetPreferencesKey("PLAYLIST_URIS")] = listaReproduccion.map { it.first.toString() }.toSet()
+            }
         }
     }
 
     fun moverArriba(index: Int) {
         if (index > 0) {
-            val nuevaLista = listaCanciones.toMutableList()
+            val nuevaLista = listaReproduccion.toMutableList()
             val item = nuevaLista.removeAt(index)
             nuevaLista.add(index - 1, item)
-            listaCanciones = nuevaLista
+            listaReproduccion = nuevaLista
         }
     }
 
     fun moverAbajo(index: Int) {
-        if (index < listaCanciones.size - 1) {
-            val nuevaLista = listaCanciones.toMutableList()
+        if (index < listaReproduccion.size - 1) {
+            val nuevaLista = listaReproduccion.toMutableList()
             val item = nuevaLista.removeAt(index)
             nuevaLista.add(index + 1, item)
-            listaCanciones = nuevaLista
+            listaReproduccion = nuevaLista
         }
     }
 
@@ -247,14 +268,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (pinSetup.length == 4) {
-                            onPinSet(pinSetup)
-                            showPinSetup = false
-                        }
-                    }
-                ) { Text("Guardar") }
+                TextButton(onClick = { if (pinSetup.length == 4) { onPinSet(pinSetup); showPinSetup = false } }) { Text("Guardar") }
             }
         )
     }
@@ -265,12 +279,10 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     ) {
         Text("RadioMixer", style = MaterialTheme.typography.titleLarge)
 
+        // Ajustes de Red
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(8.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Ajustes de Red", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -287,6 +299,25 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
                 }
+            }
+        }
+
+        // Ajustes de Temporizador
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Timer, contentDescription = "Temporizador", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Auto-Stop (Minutos)", style = MaterialTheme.typography.titleMedium)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = minutosAutoStop, 
+                    onValueChange = { if (it.all { char -> char.isDigit() }) minutosAutoStop = it }, 
+                    label = { Text("0 = Desactivado") }, 
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
 
@@ -312,13 +343,43 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             Text("Seleccionar Carpeta de Música")
         }
 
-        if (listaCanciones.isNotEmpty() && !conectado) {
-            Text("Orden de reproducción:", style = MaterialTheme.typography.titleMedium)
+        // CATÁLOGO (Todos los archivos con Checkbox)
+        if (todosLosArchivos.isNotEmpty() && !conectado) {
+            Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
             LazyColumn(
-                modifier = Modifier.heightIn(max = 300.dp),
+                modifier = Modifier.heightIn(max = 250.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                itemsIndexed(listaCanciones) { index, cancion ->
+                items(todosLosArchivos) { cancion ->
+                    val isSelected = listaReproduccion.contains(cancion)
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = isSelected,
+                                onCheckedChange = { toggleSeleccion(cancion) }
+                            )
+                            Text(
+                                text = cancion.second,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // PLAYLIST (Los seleccionados con flechas)
+        if (listaReproduccion.isNotEmpty() && !conectado) {
+            Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 250.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                itemsIndexed(listaReproduccion) { index, cancion ->
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.padding(8.dp).fillMaxWidth(),
@@ -334,8 +395,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                 IconButton(onClick = { moverArriba(index) }, enabled = index > 0) {
                                     Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) MaterialTheme.colorScheme.primary else Color.Gray)
                                 }
-                                IconButton(onClick = { moverAbajo(index) }, enabled = index < listaCanciones.size - 1) {
-                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaCanciones.size - 1) MaterialTheme.colorScheme.primary else Color.Gray)
+                                IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1) {
+                                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1) MaterialTheme.colorScheme.primary else Color.Gray)
                                 }
                             }
                         }
@@ -348,8 +409,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
         Button(
             onClick = { 
-                if (listaCanciones.isEmpty()) {
-                    mensajeEstado = "¡Selecciona música primero!"
+                if (listaReproduccion.isEmpty()) {
+                    mensajeEstado = "Selecciona al menos una canción"
                     return@Button
                 }
                 
@@ -365,16 +426,15 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                             putExtra("IP", ip)
                             putExtra("PORT", puerto.toIntOrNull() ?: 8017)
                             putExtra("PASS", password)
-                            putStringArrayListExtra("URIS", ArrayList(listaCanciones.map { it.first.toString() }))
+                            putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
+                            putStringArrayListExtra("URIS", ArrayList(listaReproduccion.map { it.first.toString() }))
                         }
                         context.startForegroundService(intent)
                         conectado = true
                         mensajeEstado = "Transmitiendo..."
                     }
                 } else {
-                    val intent = Intent(context, StreamService::class.java).apply {
-                        action = "STOP"
-                    }
+                    val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
                     context.startService(intent)
                     conectado = false
                     mensajeEstado = "Transmisión detenida."
