@@ -33,7 +33,7 @@ class StreamService : Service() {
             "START_MIC" -> {
                 isMicActive = true
                 startMicrophone()
-                // ACTUALIZAR NOTIFICACIÓN CON TIPO MICRÓFONO (Android 14+)
+                // Actualizar notificación con tipo Micrófono (Android 14+)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     val notif = buildNotification("Micrófono en Vivo", "")
                     startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -43,6 +43,11 @@ class StreamService : Service() {
             "STOP_MIC" -> {
                 isMicActive = false
                 stopMicrophone()
+                // Volver al tipo de servicio de reproducción (Android 14+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val notif = buildNotification("En Vivo", currentSong)
+                    startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                }
                 return START_STICKY
             }
         }
@@ -59,7 +64,6 @@ class StreamService : Service() {
         createNotificationChannel()
         updateNotification("Conectando...", "")
         
-        // CORRECCIÓN ANDROID 14: Especificar el tipo de servicio
         val initialNotif = buildNotification("Conectando...", "")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(1, initialNotif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
@@ -98,9 +102,7 @@ class StreamService : Service() {
                             .putExtra("TIMEOUT", timeoutMinutes)
                         LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
                         
-                        if (!isMicActive) {
-                            reproducirPlaylist(uris)
-                        }
+                        reproducirPlaylist(uris)
                     }
                 }
 
@@ -193,9 +195,15 @@ class StreamService : Service() {
 
     private fun reproducirPlaylist(uris: List<Uri>) {
         var index = 0
-        while (shoutcastClient != null && uris.isNotEmpty() && !isMicActive) {
+        while (shoutcastClient != null && uris.isNotEmpty()) {
             val uriActual = uris[index]
             
+            // Si el micrófono se activa, la lista espera pausadamente
+            while (isMicActive && shoutcastClient != null) {
+                Thread.sleep(100)
+            }
+            if (shoutcastClient == null) break
+
             currentSong = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
             val intentUpdate = Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong)
             LocalBroadcastManager.getInstance(this).sendBroadcast(intentUpdate)
@@ -258,7 +266,13 @@ class StreamService : Service() {
             val tiempoInicio = System.currentTimeMillis()
             var lastBroadcastedSecond = -1L
 
-            while (shoutcastClient != null && !isMicActive) {
+            while (shoutcastClient != null) {
+                // PAUSA LA MÚSICA SI EL MICRÓFONO ESTÁ ACTIVO, SIN PERDER EL PROGRESO
+                if (isMicActive) {
+                    Thread.sleep(100)
+                    continue 
+                }
+
                 val sampleSize = extractor.readSampleData(buffer, 0)
                 if (sampleSize < 0) break
 
