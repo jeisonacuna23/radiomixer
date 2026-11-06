@@ -16,6 +16,8 @@ class StreamService : Service() {
     private var shoutcastClient: ShoutcastClient? = null
     private var currentStatus = "Iniciando..."
     private var currentSong = ""
+    private var startTime = 0L
+    private var timeoutMinutes = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -28,10 +30,11 @@ class StreamService : Service() {
         val ip = intent?.getStringExtra("IP") ?: return START_NOT_STICKY
         val port = intent?.getIntExtra("PORT", 8017) ?: 8017
         val pass = intent?.getStringExtra("PASS") ?: ""
-        val timeoutMinutes = intent?.getIntExtra("TIMEOUT_MINUTES", 0) ?: 0
+        timeoutMinutes = intent?.getIntExtra("TIMEOUT_MINUTES", 0) ?: 0
         val uriList = intent?.getStringArrayListExtra("URIS") ?: return START_NOT_STICKY
 
         val uris = uriList.map { Uri.parse(it) }
+        startTime = System.currentTimeMillis() // Guardamos la hora exacta de inicio
 
         createNotificationChannel()
         updateNotification("Conectando...", "")
@@ -61,6 +64,12 @@ class StreamService : Service() {
                 )
 
                 shoutcastClient?.connectAndStream {
+                    // Avisamos a la UI la hora de inicio y el límite
+                    val timeIntent = Intent("TIME_UPDATE")
+                        .putExtra("START_TIME", startTime)
+                        .putExtra("TIMEOUT", timeoutMinutes)
+                    LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
+
                     reproducirPlaylist(uris)
                 }
 

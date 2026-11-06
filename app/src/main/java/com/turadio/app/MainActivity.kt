@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -37,6 +38,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.FragmentActivity
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -144,6 +146,14 @@ fun LockScreen(savedPin: String, onUnlock: () -> Unit) {
     }
 }
 
+// Función auxiliar para dar formato de reloj (HH:MM:SS)
+fun formatTime(seconds: Long): String {
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return String.format("%02d:%02d:%02d", h, m, s)
+}
+
 @Composable
 fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     val context = LocalContext.current
@@ -154,13 +164,18 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var password by remember { mutableStateOf("") }
     var minutosAutoStop by remember { mutableStateOf("") }
     
-    // Listas de estado
     var todosLosArchivos by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
     var listaReproduccion by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
     
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
+
+    // ESTADOS PARA LOS RELOJES
+    var startTime by remember { mutableLongStateOf(0L) }
+    var timeoutMinutes by remember { mutableIntStateOf(0) }
+    var tiempoAlAire by remember { mutableStateOf("00:00:00") }
+    var tiempoRestante by remember { mutableStateOf("--:--:--") }
 
     var showSettings by remember { mutableStateOf(false) }
     var pinSetup by remember { mutableStateOf("") }
@@ -179,25 +194,59 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             val archivos = root?.listFiles()?.filter { file -> file.type?.startsWith("audio/") == true }
             todosLosArchivos = archivos?.map { Pair(it.uri, it.name ?: "Canción") } ?: emptyList()
             
-            // Recuperar las canciones que ya estaban seleccionadas
             val savedUris = prefs[stringSetPreferencesKey("PLAYLIST_URIS")] ?: emptySet()
             if (savedUris.isNotEmpty()) {
                 listaReproduccion = todosLosArchivos.filter { savedUris.contains(it.first.toString()) }
             } else {
-                listaReproduccion = todosLosArchivos // Si es la primera vez, seleccionar todas
+                listaReproduccion = todosLosArchivos
             }
-            
             mensajeEstado = "Carpeta cargada: ${todosLosArchivos.size} canciones"
+        }
+    }
+
+    // EFECTO DEL RELOJ: Se actualiza cada segundo si está conectado
+    LaunchedEffect(conectado, startTime, timeoutMinutes) {
+        if (conectado && startTime > 0) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                val elapsedSeconds = (now - startTime) / 1000
+                tiempoAlAire = formatTime(elapsedSeconds)
+
+                if (timeoutMinutes > 0) {
+                    val totalSeconds = timeoutMinutes * 60L
+                    val remainingSeconds = totalSeconds - elapsedSeconds
+                    if (remainingSeconds > 0) {
+                        tiempoRestante = formatTime(remainingSeconds)
+                    } else {
+                        tiempoRestante = "00:00:00"
+                        conectado = false // El servicio se habrá apagado
+                    }
+                } else {
+                    tiempoRestante = "Ilimitado"
+                }
+                
+                delay(1000L) // Esperar 1 segundo
+            }
         }
     }
 
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
-                cancionActual = intent?.getStringExtra("SONG_NAME") ?: "Desconocida"
+                when (intent?.action) {
+                    "SONG_UPDATE" -> cancionActual = intent.getStringExtra("SONG_NAME") ?: "Desconocida"
+                    "TIME_UPDATE" -> {
+                        startTime = intent.getLongExtra("START_TIME", 0L)
+                        timeoutMinutes = intent.getIntExtra("TIMEOUT", 0)
+                    }
+                }
             }
         }
-        LocalBroadcastManager.getInstance(context).registerReceiver(receiver, IntentFilter("SONG_UPDATE"))
+        val filter = IntentFilter().apply {
+            addAction("SONG_UPDATE")
+            addAction("TIME_UPDATE")
+        }
+        LocalBroadcastManager.getInstance(context).registerReceiver(receiver, filter)
         onDispose { LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver) }
     }
 
@@ -212,19 +261,17 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             val root = DocumentFile.fromTreeUri(context, it)
             val archivos = root?.listFiles()?.filter { file -> file.type?.startsWith("audio/") == true }
             todosLosArchivos = archivos?.map { file -> Pair(file.uri, file.name ?: "Canción") } ?: emptyList()
-            listaReproduccion = todosLosArchivos // Por defecto seleccionamos todas al elegir carpeta nueva
+            listaReproduccion = todosLosArchivos
             mensajeEstado = "Canciones encontradas: ${todosLosArchivos.size}"
         }
     }
 
-    // Lógica para marcar/desmarcar (Catálogo)
     fun toggleSeleccion(cancion: Pair<Uri, String>) {
         if (listaReproduccion.contains(cancion)) {
             listaReproduccion = listaReproduccion - cancion
         } else {
             listaReproduccion = listaReproduccion + cancion
         }
-        // Guardar en DataStore
         scope.launch {
             context.dataStore.edit { settings ->
                 settings[stringSetPreferencesKey("PLAYLIST_URIS")] = listaReproduccion.map { it.first.toString() }.toSet()
@@ -279,7 +326,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     ) {
         Text("RadioMixer", style = MaterialTheme.typography.titleLarge)
 
-        // Ajustes de Red
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -302,7 +348,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             }
         }
 
-        // Ajustes de Temporizador
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -333,6 +378,19 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge)
+                    
+                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                    
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("Tiempo al aire:", style = MaterialTheme.typography.labelMedium)
+                            Text(tiempoAlAire, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Restante Auto-Stop:", style = MaterialTheme.typography.labelMedium)
+                            Text(tiempoRestante, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                 }
             }
         }
@@ -343,7 +401,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             Text("Seleccionar Carpeta de Música")
         }
 
-        // CATÁLOGO (Todos los archivos con Checkbox)
         if (todosLosArchivos.isNotEmpty() && !conectado) {
             Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
             LazyColumn(
@@ -372,7 +429,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             }
         }
 
-        // PLAYLIST (Los seleccionados con flechas)
         if (listaReproduccion.isNotEmpty() && !conectado) {
             Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
             LazyColumn(
