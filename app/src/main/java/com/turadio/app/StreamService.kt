@@ -66,18 +66,15 @@ class StreamService : Service() {
 
     private fun reproducirPlaylist(uris: List<Uri>) {
         var index = 0
-        // Bucle infinito para el Auto-DJ
         while (shoutcastClient != null && uris.isNotEmpty()) {
             val uriActual = uris[index]
             
-            // Extraer el nombre del archivo para mostrarlo en la UI
             val nombreCancion = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
             val intentUpdate = Intent("SONG_UPDATE").putExtra("SONG_NAME", nombreCancion)
             LocalBroadcastManager.getInstance(this).sendBroadcast(intentUpdate)
             
             enviarAudioNativo(uriActual)
 
-            // Pasar a la siguiente canción (vuelve al inicio si llega al final)
             index++
             if (index >= uris.size) {
                 index = 0
@@ -115,13 +112,12 @@ class StreamService : Service() {
 
             extractor.selectTrack(audioTrackIndex)
             val buffer = ByteBuffer.allocate(65536)
-            
             var bytesEnviadosTotales = 0L
             val tiempoInicio = System.currentTimeMillis()
 
             while (shoutcastClient != null) {
                 val sampleSize = extractor.readSampleData(buffer, 0)
-                if (sampleSize < 0) break // Fin de la canción
+                if (sampleSize < 0) break
 
                 var audioData = ByteArray(sampleSize)
                 buffer.position(0)
@@ -142,9 +138,7 @@ class StreamService : Service() {
                     Thread.sleep(tiempoEspera.toLong())
                 }
             }
-
         } catch (e: Exception) {
-            // Ignoramos el error para que pase a la siguiente canción
         } finally {
             extractor.release()
         }
@@ -158,7 +152,6 @@ class StreamService : Service() {
             96000 -> 0; 88200 -> 1; 64000 -> 2; 48000 -> 3; 44100 -> 4; 32000 -> 5; 24000 -> 6; 22050 -> 7; 16000 -> 8; 12000 -> 9; 11025 -> 10; 8000 -> 11; 7350 -> 12; else -> 4
         }
         val chanCfg = channelCount
-
         adts[0] = 0xFF.toByte()
         adts[1] = 0xF1.toByte()
         adts[2] = (((profile - 1) shl 6) + (freqIdx shl 2) + (chanCfg shr 2)).toByte()
@@ -166,7 +159,6 @@ class StreamService : Service() {
         adts[4] = ((packetSize and 0x7FF) shr 3).toByte()
         adts[5] = (((packetSize and 7) shl 5) + 0x1F).toByte()
         adts[6] = 0xFC.toByte()
-
         return adts + aacData
     }
 

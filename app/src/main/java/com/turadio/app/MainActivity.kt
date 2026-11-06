@@ -11,10 +11,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -51,20 +54,28 @@ fun PantallaPrincipal() {
     var puerto by remember { mutableStateOf("8017") }
     var password by remember { mutableStateOf("") }
     
-    var listaCanciones by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var listaCanciones by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
 
-    // Cargar datos guardados al abrir la app
+    // Cargar datos guardados
     LaunchedEffect(Unit) {
         val prefs = context.dataStore.data.first()
         ip = prefs[stringPreferencesKey("IP")] ?: "radio.conectarservidor.com"
         puerto = prefs[stringPreferencesKey("PORT")] ?: "8017"
         password = prefs[stringPreferencesKey("PASS")] ?: ""
+        
+        val savedFolderUri = prefs[stringPreferencesKey("FOLDER_URI")]
+        if (savedFolderUri != null) {
+            val uri = Uri.parse(savedFolderUri)
+            val root = DocumentFile.fromTreeUri(context, uri)
+            val archivos = root?.listFiles()?.filter { file -> file.type?.startsWith("audio/") == true }
+            listaCanciones = archivos?.map { Pair(it.uri, it.name ?: "Canción") } ?: emptyList()
+            mensajeEstado = "Carpeta cargada: ${listaCanciones.size} canciones"
+        }
     }
 
-    // Escuchar actualizaciones de canción desde el Servicio
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
@@ -72,9 +83,7 @@ fun PantallaPrincipal() {
             }
         }
         LocalBroadcastManager.getInstance(context).registerReceiver(receiver, IntentFilter("SONG_UPDATE"))
-        onDispose {
-            LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver)
-        }
+        onDispose { LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver) }
     }
 
     val selectorCarpeta = rememberLauncherForActivityResult(
@@ -82,10 +91,31 @@ fun PantallaPrincipal() {
     ) { uri: Uri? ->
         uri?.let {
             context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            scope.launch {
+                context.dataStore.edit { settings -> settings[stringPreferencesKey("FOLDER_URI")] = it.toString() }
+            }
             val root = DocumentFile.fromTreeUri(context, it)
             val archivos = root?.listFiles()?.filter { file -> file.type?.startsWith("audio/") == true }
-            listaCanciones = archivos?.map { file -> file.uri } ?: emptyList()
+            listaCanciones = archivos?.map { file -> Pair(file.uri, file.name ?: "Canción") } ?: emptyList()
             mensajeEstado = "Canciones encontradas: ${listaCanciones.size}"
+        }
+    }
+
+    fun moverArriba(index: Int) {
+        if (index > 0) {
+            val nuevaLista = listaCanciones.toMutableList()
+            val item = nuevaLista.removeAt(index)
+            nuevaLista.add(index - 1, item)
+            listaCanciones = nuevaLista
+        }
+    }
+
+    fun moverAbajo(index: Int) {
+        if (index < listaCanciones.size - 1) {
+            val nuevaLista = listaCanciones.toMutableList()
+            val item = nuevaLista.removeAt(index)
+            nuevaLista.add(index + 1, item)
+            listaCanciones = nuevaLista
         }
     }
 
@@ -116,6 +146,38 @@ fun PantallaPrincipal() {
             Text("Seleccionar Carpeta de Música")
         }
 
+        if (listaCanciones.isNotEmpty() && !conectado) {
+            Text("Orden de reproducción:", style = MaterialTheme.typography.titleMedium)
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 300.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                itemsIndexed(listaCanciones) { index, cancion ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = cancion.second,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1
+                            )
+                            Row {
+                                TextButton(onClick = { moverArriba(index) }, enabled = index > 0) {
+                                    Text("⬆️", style = MaterialTheme.typography.titleLarge)
+                                }
+                                TextButton(onClick = { moverAbajo(index) }, enabled = index < listaCanciones.size - 1) {
+                                    Text("⬇️", style = MaterialTheme.typography.titleLarge)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(20.dp))
 
         Button(
@@ -127,7 +189,6 @@ fun PantallaPrincipal() {
                 
                 if (!conectado) {
                     scope.launch {
-                        // Guardar configuración
                         context.dataStore.edit { settings ->
                             settings[stringPreferencesKey("IP")] = ip
                             settings[stringPreferencesKey("PORT")] = puerto
@@ -138,7 +199,7 @@ fun PantallaPrincipal() {
                             putExtra("IP", ip)
                             putExtra("PORT", puerto.toIntOrNull() ?: 8017)
                             putExtra("PASS", password)
-                            putStringArrayListExtra("URIS", ArrayList(listaCanciones.map { it.toString() }))
+                            putStringArrayListExtra("URIS", ArrayList(listaCanciones.map { it.first.toString() }))
                         }
                         context.startForegroundService(intent)
                         conectado = true
