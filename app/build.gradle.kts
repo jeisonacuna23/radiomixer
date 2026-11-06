@@ -11,7 +11,7 @@ android {
         applicationId = "com.turadio.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5 // Versión 1.4
+        versionCode = 5
         versionName = "1.4"
     }
 
@@ -54,11 +54,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended") // Iconos vectoriales
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.datastore:datastore-preferences:1.1.0")
     implementation("androidx.localbroadcastmanager:localbroadcastmanager:1.1.0")
-    
-    // Seguridad: Huella dactilar
     implementation("androidx.biometric:biometric:1.1.0")
+    // Dependencia necesaria para FragmentActivity
+    implementation("androidx.fragment:fragment-ktx:1.6.2")
 }

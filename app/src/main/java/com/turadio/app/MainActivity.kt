@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,6 +15,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -33,13 +33,15 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.documentfile.provider.DocumentFile
+import androidx.fragment.app.FragmentActivity
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 val Context.dataStore by preferencesDataStore(name = "settings")
 
-class MainActivity : ComponentActivity() {
+// CORRECCIÓN: Heredar de FragmentActivity en lugar de ComponentActivity
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -55,24 +57,22 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppRoot() {
     val context = LocalContext.current
-    val activity = context as ComponentActivity
+    val activity = context as FragmentActivity
     val scope = rememberCoroutineScope()
 
     var isLocked by remember { mutableStateOf(true) }
     var savedPin by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(true) }
 
-    // Cargar el PIN guardado
     LaunchedEffect(Unit) {
         val prefs = context.dataStore.data.first()
         savedPin = prefs[stringPreferencesKey("APP_PIN")]
         isLoading = false
         if (savedPin == null) {
-            isLocked = false // Primera vez, pedirá configurar PIN
+            isLocked = false
         }
     }
 
-    // Intentar huella dactilar automáticamente al abrir
     LaunchedEffect(isLocked, savedPin) {
         if (isLocked && savedPin != null) {
             val biometricManager = BiometricManager.from(context)
@@ -134,7 +134,7 @@ fun LockScreen(savedPin: String, onUnlock: () -> Unit) {
                 error = false
             },
             visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
             isError = error,
             label = { Text("PIN de 4 dígitos") },
             modifier = Modifier.fillMaxWidth()
@@ -229,7 +229,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
-    // Diálogo para configurar PIN inicial
     if (showPinSetup) {
         AlertDialog(
             onDismissRequest = { },
@@ -242,7 +241,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         value = pinSetup,
                         onValueChange = { if (it.length <= 4) pinSetup = it },
                         visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                         label = { Text("Nuevo PIN") }
                     )
                 }
@@ -266,7 +265,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     ) {
         Text("RadioMixer", style = MaterialTheme.typography.titleLarge)
 
-        // TOGGLE DE AJUSTES (Servidor, Puerto, Contraseña)
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(8.dp)) {
                 Row(
