@@ -146,12 +146,11 @@ fun LockScreen(savedPin: String, onUnlock: () -> Unit) {
     }
 }
 
-// Función auxiliar para dar formato de reloj (HH:MM:SS)
 fun formatTime(seconds: Long): String {
     val h = seconds / 3600
     val m = (seconds % 3600) / 60
     val s = seconds % 60
-    return String.format("%02d:%02d:%02d", h, m, s)
+    return if (h > 0) String.format("%02d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
 }
 
 @Composable
@@ -171,11 +170,15 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var conectado by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
 
-    // ESTADOS PARA LOS RELOJES
+    // Relojes
     var startTime by remember { mutableLongStateOf(0L) }
     var timeoutMinutes by remember { mutableIntStateOf(0) }
-    var tiempoAlAire by remember { mutableStateOf("00:00:00") }
-    var tiempoRestante by remember { mutableStateOf("--:--:--") }
+    var tiempoAlAire by remember { mutableStateOf("00:00") }
+    var tiempoRestante by remember { mutableStateOf("--:--") }
+
+    // Progreso de la Canción
+    var trackElapsed by remember { mutableLongStateOf(0L) }
+    var trackDuration by remember { mutableLongStateOf(0L) }
 
     var showSettings by remember { mutableStateOf(false) }
     var pinSetup by remember { mutableStateOf("") }
@@ -204,7 +207,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
-    // EFECTO DEL RELOJ: Se actualiza cada segundo si está conectado
     LaunchedEffect(conectado, startTime, timeoutMinutes) {
         if (conectado && startTime > 0) {
             while (true) {
@@ -218,14 +220,14 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     if (remainingSeconds > 0) {
                         tiempoRestante = formatTime(remainingSeconds)
                     } else {
-                        tiempoRestante = "00:00:00"
-                        conectado = false // El servicio se habrá apagado
+                        tiempoRestante = "00:00"
+                        conectado = false 
                     }
                 } else {
                     tiempoRestante = "Ilimitado"
                 }
                 
-                delay(1000L) // Esperar 1 segundo
+                delay(1000L)
             }
         }
     }
@@ -234,10 +236,20 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    "SONG_UPDATE" -> cancionActual = intent.getStringExtra("SONG_NAME") ?: "Desconocida"
+                    "SONG_UPDATE" -> {
+                        cancionActual = intent.getStringExtra("SONG_NAME") ?: "Desconocida"
+                        trackElapsed = 0L // Reiniciar progreso para la nueva canción
+                        trackDuration = 0L
+                    }
                     "TIME_UPDATE" -> {
                         startTime = intent.getLongExtra("START_TIME", 0L)
                         timeoutMinutes = intent.getIntExtra("TIMEOUT", 0)
+                    }
+                    "TRACK_DURATION_UPDATE" -> {
+                        trackDuration = intent.getLongExtra("DURATION", 0L)
+                    }
+                    "TRACK_PROGRESS_UPDATE" -> {
+                        trackElapsed = intent.getLongExtra("PROGRESS", 0L)
                     }
                 }
             }
@@ -245,6 +257,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         val filter = IntentFilter().apply {
             addAction("SONG_UPDATE")
             addAction("TIME_UPDATE")
+            addAction("TRACK_DURATION_UPDATE")
+            addAction("TRACK_PROGRESS_UPDATE")
         }
         LocalBroadcastManager.getInstance(context).registerReceiver(receiver, filter)
         onDispose { LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver) }
@@ -379,6 +393,24 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge)
                     
+                    // PROGRESO DE LA PISTA
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (trackDuration > 0) {
+                        LinearProgressIndicator(
+                            progress = { trackElapsed.toFloat() / trackDuration.toFloat() },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+                            Text(formatTime(trackDuration), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+                        }
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
                     Divider(modifier = Modifier.padding(vertical = 8.dp))
                     
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

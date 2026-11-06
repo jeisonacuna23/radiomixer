@@ -4,6 +4,7 @@ import android.app.*
 import android.content.Intent
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
@@ -34,13 +35,12 @@ class StreamService : Service() {
         val uriList = intent?.getStringArrayListExtra("URIS") ?: return START_NOT_STICKY
 
         val uris = uriList.map { Uri.parse(it) }
-        startTime = System.currentTimeMillis() // Guardamos la hora exacta de inicio
+        startTime = System.currentTimeMillis()
 
         createNotificationChannel()
         updateNotification("Conectando...", "")
         startForeground(1, buildNotification("Conectando...", ""))
 
-        // TEMPORIZADOR AUTO-STOP
         if (timeoutMinutes > 0) {
             serviceScope.launch {
                 delay(timeoutMinutes * 60 * 1000L)
@@ -64,7 +64,6 @@ class StreamService : Service() {
                 )
 
                 shoutcastClient?.connectAndStream {
-                    // Avisamos a la UI la hora de inicio y el límite
                     val timeIntent = Intent("TIME_UPDATE")
                         .putExtra("START_TIME", startTime)
                         .putExtra("TIMEOUT", timeoutMinutes)
@@ -92,6 +91,23 @@ class StreamService : Service() {
             val intentUpdate = Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong)
             LocalBroadcastManager.getInstance(this).sendBroadcast(intentUpdate)
             updateNotification("En Vivo", currentSong)
+
+            // OBTENER DURACIÓN DE LA PISTA
+            val retriever = MediaMetadataRetriever()
+            var trackDurationSeconds = 0L
+            try {
+                retriever.setDataSource(this, uriActual)
+                val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong() ?: 0L
+                trackDurationSeconds = durationMs / 1000
+            } catch (e: Exception) {
+                // Ignorar si falla
+            } finally {
+                retriever.release()
+            }
+            // Avisamos a la UI la duración de la canción actual
+            LocalBroadcastManager.getInstance(this).sendBroadcast(
+                Intent("TRACK_DURATION_UPDATE").putExtra("DURATION", trackDurationSeconds)
+            )
             
             enviarAudioNativo(uriActual)
 
@@ -134,6 +150,7 @@ class StreamService : Service() {
             val buffer = ByteBuffer.allocate(65536)
             var bytesEnviadosTotales = 0L
             val tiempoInicio = System.currentTimeMillis()
+            var lastBroadcastedSecond = -1L // Para no saturar la UI enviando cada milisegundo
 
             while (shoutcastClient != null) {
                 val sampleSize = extractor.readSampleData(buffer, 0)
@@ -150,6 +167,15 @@ class StreamService : Service() {
                 shoutcastClient?.sendAudio(audioData, audioData.size)
                 bytesEnviadosTotales += audioData.size
                 extractor.advance()
+
+                // Calcular progreso de la canción (8000 bytes = 1 segundo a 64kbps)
+                val currentTrackSecond = bytesEnviadosTotales / 8000
+                if (currentTrackSecond > lastBroadcastedSecond) {
+                    lastBroadcastedSecond = currentTrackSecond
+                    LocalBroadcastManager.getInstance(this).sendBroadcast(
+                        Intent("TRACK_PROGRESS_UPDATE").putExtra("PROGRESS", currentTrackSecond)
+                    )
+                }
 
                 val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
                 val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
