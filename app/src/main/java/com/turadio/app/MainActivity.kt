@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,6 +50,9 @@ val Context.dataStore by preferencesDataStore(name = "settings")
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // MANTENER LA PANTALLA ENCENDIDA
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -166,6 +170,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var minutosAutoStop by remember { mutableStateOf("") }
     
     var modoMezcladora by remember { mutableStateOf(false) }
+    var grabarMezcladora by remember { mutableStateOf(false) }
 
     var todosLosArchivos by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
     var listaReproduccion by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
@@ -189,7 +194,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            cancionActual = "Entrada de Línea (Live)" // Limpieza
+            cancionActual = "Entrada de Línea (Live)"
             trackElapsed = 0L
             trackDuration = 0L
             val intent = Intent(context, StreamService::class.java).apply {
@@ -198,6 +203,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 putExtra("PASS", password)
                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
                 putExtra("LINE_IN_MODE", true)
+                putExtra("RECORD_STREAM", grabarMezcladora)
             }
             context.startForegroundService(intent)
             conectado = true
@@ -549,6 +555,15 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    // SWITCH PARA GRABAR
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it })
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Grabar transmisión localmente", style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
         }
@@ -560,7 +575,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 if (!conectado) {
                     if (modoMezcladora) {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            cancionActual = "Entrada de Línea (Live)" // FORZAR LIMPIEZA
+                            cancionActual = "Entrada de Línea (Live)"
                             trackElapsed = 0L
                             trackDuration = 0L
                             val intent = Intent(context, StreamService::class.java).apply {
@@ -569,6 +584,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                 putExtra("PASS", password)
                                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
                                 putExtra("LINE_IN_MODE", true)
+                                putExtra("RECORD_STREAM", grabarMezcladora)
                             }
                             context.startForegroundService(intent)
                             conectado = true

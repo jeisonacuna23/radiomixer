@@ -9,6 +9,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.*
+import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 
 class StreamService : Service() {
@@ -19,6 +21,7 @@ class StreamService : Service() {
     private var startTime = 0L
     private var timeoutMinutes = 0
     private var isLineInMode = false
+    private var isRecording = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -28,7 +31,6 @@ class StreamService : Service() {
             return START_NOT_STICKY
         }
 
-        // LIMPIEZA PROFUNDA: Si había algo corriendo, lo matamos antes de empezar
         shoutcastClient?.disconnect()
         shoutcastClient = null
         serviceScope.cancel()
@@ -40,6 +42,7 @@ class StreamService : Service() {
         timeoutMinutes = intent?.getIntExtra("TIMEOUT_MINUTES", 0) ?: 0
         val uriList = intent?.getStringArrayListExtra("URIS") ?: emptyList()
         isLineInMode = intent?.getBooleanExtra("LINE_IN_MODE", false) ?: false
+        isRecording = intent?.getBooleanExtra("RECORD_STREAM", false) ?: false
 
         val uris = uriList.map { Uri.parse(it) }
         startTime = System.currentTimeMillis()
@@ -138,6 +141,17 @@ class StreamService : Service() {
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         codec.start()
 
+        // PREPARAR GRABACIÓN SI ESTÁ ACTIVADA
+        var fileOutputStream: FileOutputStream? = null
+        if (isRecording) {
+            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
+            val recordDir = getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC) ?: filesDir
+            val file = File(recordDir, "Grabacion_$timestamp.aac")
+            fileOutputStream = FileOutputStream(file)
+            currentStatus = "Grabando en: ${file.name}"
+            updateNotification(currentStatus, "")
+        }
+
         audioRecord.startRecording()
         val bufferInfo = MediaCodec.BufferInfo()
 
@@ -163,7 +177,18 @@ class StreamService : Service() {
                         outputBuffer.position(bufferInfo.offset)
                         outputBuffer.get(aacData)
                         val adtsData = addAdtsHeader(aacData, sampleRate, 2)
+                        
+                        // Enviar al servidor
                         shoutcastClient?.sendAudio(adtsData, adtsData.size)
+                        
+                        // GUARDAR EN EL ARCHIVO SI ESTÁ GRABANDO
+                        if (isRecording) {
+                            try {
+                                fileOutputStream?.write(adtsData)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
                     }
                     codec.releaseOutputBuffer(outputIndex, false)
                     outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
@@ -176,6 +201,9 @@ class StreamService : Service() {
             audioRecord.release()
             codec.stop()
             codec.release()
+            try {
+                fileOutputStream?.close()
+            } catch (e: Exception) {}
         }
     }
 
