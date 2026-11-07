@@ -25,12 +25,22 @@ class StreamService : Service() {
     private var startTime = 0L
     private var timeoutMinutes = 0
     private var isLineInMode = false
-    private var isRecording = false
+    
+    // Variables de control de estado
+    @Volatile private var isRecording = false
+    @Volatile private var isStreaming = false
+
+    // Variables globales para poder cerrarlas a la fuerza
+    private var outputStream: OutputStream? = null
+    private var audioRecord: AudioRecord? = null
+    private var mediaCodec: MediaCodec? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "STOP") {
+            isStreaming = false
+            isRecording = false
             stopSelf()
             return START_NOT_STICKY
         }
@@ -47,6 +57,7 @@ class StreamService : Service() {
         val uriList = intent?.getStringArrayListExtra("URIS") ?: emptyList()
         isLineInMode = intent?.getBooleanExtra("LINE_IN_MODE", false) ?: false
         isRecording = intent?.getBooleanExtra("RECORD_STREAM", false) ?: false
+        isStreaming = true // Activar bandera de transmisión
 
         val uris = uriList.map { Uri.parse(it) }
         startTime = System.currentTimeMillis()
@@ -65,6 +76,7 @@ class StreamService : Service() {
         if (timeoutMinutes > 0) {
             serviceScope.launch {
                 delay(timeoutMinutes * 60 * 1000L)
+                isStreaming = false
                 stopSelf()
             }
         }
@@ -80,6 +92,7 @@ class StreamService : Service() {
                     onError = { error ->
                         currentStatus = "ERROR: $error"
                         updateNotification(error, "")
+                        isStreaming = false
                         stopSelf()
                     }
                 )
@@ -102,6 +115,7 @@ class StreamService : Service() {
             } catch (e: Exception) {
                 currentStatus = "Fallo: ${e.message}"
                 updateNotification(currentStatus, "")
+                isStreaming = false
                 stopSelf()
             }
         }
@@ -121,7 +135,7 @@ class StreamService : Service() {
             MediaRecorder.AudioSource.DEFAULT
         }
 
-        val audioRecord = AudioRecord(
+        audioRecord = AudioRecord(
             source,
             sampleRate,
             channelConfig,
@@ -129,9 +143,10 @@ class StreamService : Service() {
             minBufSize * 2
         )
 
-        if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
+        if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
             currentStatus = "Error: No se pudo abrir el micrófono/línea"
             updateNotification(currentStatus, "")
+            isStreaming = false
             stopSelf()
             return
         }
@@ -141,12 +156,10 @@ class StreamService : Service() {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
         }
-        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        codec.start()
+        mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+        mediaCodec?.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        mediaCodec?.start()
 
-        // PREPARAR GRABACIÓN EN CARPETA PÚBLICA (Music/A Voz en Cuello)
-        var outputStream: OutputStream? = null
         if (isRecording) {
             val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
             val fileName = "Grabacion_$timestamp.aac"
@@ -169,7 +182,6 @@ class StreamService : Service() {
                     outputStream = FileOutputStream(file)
                 }
                 
-                // Avisar a la UI que la grabación inició
                 LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", true))
                 currentStatus = "Transmitiendo y Grabando..."
                 updateNotification(currentStatus, "")
@@ -179,33 +191,36 @@ class StreamService : Service() {
             }
         }
 
-        audioRecord.startRecording()
+        audioRecord?.startRecording()
         val bufferInfo = MediaCodec.BufferInfo()
 
         try {
-            while (shoutcastClient != null) {
+            // EL BUCLE AHORA DEPENDE DE isStreaming
+            while (isStreaming) {
                 val pcmBuffer = ByteArray(minBufSize)
-                val read = audioRecord.read(pcmBuffer, 0, pcmBuffer.size)
+                val read = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
                 if (read > 0) {
-                    val inputIndex = codec.dequeueInputBuffer(10000)
+                    val inputIndex = mediaCodec?.dequeueInputBuffer(10000) ?: -1
                     if (inputIndex >= 0) {
-                        val inputBuffer = codec.getInputBuffer(inputIndex)
+                        val inputBuffer = mediaCodec?.getInputBuffer(inputIndex)
                         inputBuffer?.clear()
                         inputBuffer?.put(pcmBuffer, 0, read)
-                        codec.queueInputBuffer(inputIndex, 0, read, System.nanoTime() / 1000, 0)
+                        mediaCodec?.queueInputBuffer(inputIndex, 0, read, System.nanoTime() / 1000, 0)
                     }
                 }
 
-                var outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+                var outputIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, 0) ?: -1
                 while (outputIndex >= 0) {
-                    val outputBuffer = codec.getOutputBuffer(outputIndex)
+                    val outputBuffer = mediaCodec?.getOutputBuffer(outputIndex)
                     if (outputBuffer != null && bufferInfo.size > 0) {
                         val aacData = ByteArray(bufferInfo.size)
                         outputBuffer.position(bufferInfo.offset)
                         outputBuffer.get(aacData)
                         val adtsData = addAdtsHeader(aacData, sampleRate, 2)
                         
-                        shoutcastClient?.sendAudio(adtsData, adtsData.size)
+                        if (isStreaming) {
+                            shoutcastClient?.sendAudio(adtsData, adtsData.size)
+                        }
                         
                         if (isRecording) {
                             try {
@@ -215,28 +230,31 @@ class StreamService : Service() {
                             }
                         }
                     }
-                    codec.releaseOutputBuffer(outputIndex, false)
-                    outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+                    mediaCodec?.releaseOutputBuffer(outputIndex, false)
+                    outputIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, 0) ?: -1
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
-            audioRecord.stop()
-            audioRecord.release()
-            codec.stop()
-            codec.release()
+            // CIERRE FORZOSO AL SALIR DEL BUCLE
+            try { audioRecord?.stop() } catch (e: Exception) {}
+            try { audioRecord?.release() } catch (e: Exception) {}
+            try { mediaCodec?.stop() } catch (e: Exception) {}
+            try { mediaCodec?.release() } catch (e: Exception) {}
             try {
+                outputStream?.flush()
                 outputStream?.close()
-                // Avisar a la UI que la grabación terminó
-                LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
             } catch (e: Exception) {}
+            
+            isRecording = false
+            LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
         }
     }
 
     private fun reproducirPlaylist(uris: List<Uri>) {
         var index = 0
-        while (shoutcastClient != null && uris.isNotEmpty()) {
+        while (isStreaming && uris.isNotEmpty()) {
             val uriActual = uris[index]
             
             currentSong = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
@@ -301,7 +319,7 @@ class StreamService : Service() {
             val tiempoInicio = System.currentTimeMillis()
             var lastBroadcastedSecond = -1L
 
-            while (shoutcastClient != null) {
+            while (isStreaming) {
                 val sampleSize = extractor.readSampleData(buffer, 0)
                 if (sampleSize < 0) break
 
@@ -357,8 +375,20 @@ class StreamService : Service() {
     }
 
     override fun onDestroy() {
+        isStreaming = false
+        isRecording = false
+        
+        try { outputStream?.flush() } catch (e: Exception) {}
+        try { outputStream?.close() } catch (e: Exception) {}
+        try { audioRecord?.stop() } catch (e: Exception) {}
+        try { audioRecord?.release() } catch (e: Exception) {}
+        try { mediaCodec?.stop() } catch (e: Exception) {}
+        try { mediaCodec?.release() } catch (e: Exception) {}
+
         shoutcastClient?.disconnect()
         serviceScope.cancel()
+        
+        LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
         super.onDestroy()
     }
 

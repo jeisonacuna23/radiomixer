@@ -449,7 +449,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
                         
-                        // INDICADOR DE GRABACIÓN
                         if (isRecordingActive) {
                             Spacer(modifier = Modifier.weight(1f))
                             Icon(Icons.Default.FiberManualRecord, contentDescription = "Grabando", tint = Color.Red, modifier = Modifier.size(16.dp))
@@ -629,6 +628,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         }
                     }
                 } else {
+                    // AL DETENER, LIMPIAMOS EL ESTADO VISUAL INMEDIATAMENTE
+                    isRecordingActive = false
                     val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
                     context.startService(intent)
                     conectado = false
