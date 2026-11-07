@@ -28,6 +28,12 @@ class StreamService : Service() {
             return START_NOT_STICKY
         }
 
+        // LIMPIEZA PROFUNDA: Si había algo corriendo, lo matamos antes de empezar
+        shoutcastClient?.disconnect()
+        shoutcastClient = null
+        serviceScope.cancel()
+        serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
         val ip = intent?.getStringExtra("IP") ?: return START_NOT_STICKY
         val port = intent?.getIntExtra("PORT", 8017) ?: 8017
         val pass = intent?.getStringExtra("PASS") ?: ""
@@ -58,20 +64,18 @@ class StreamService : Service() {
 
         serviceScope.launch {
             try {
-                if (shoutcastClient == null) {
-                    shoutcastClient = ShoutcastClient(
-                        ip, port, pass,
-                        onStatus = { status ->
-                            currentStatus = status
-                            updateNotification(status, currentSong)
-                        },
-                        onError = { error ->
-                            currentStatus = "ERROR: $error"
-                            updateNotification(error, "")
-                            stopSelf()
-                        }
-                    )
-                }
+                shoutcastClient = ShoutcastClient(
+                    ip, port, pass,
+                    onStatus = { status ->
+                        currentStatus = status
+                        updateNotification(status, currentSong)
+                    },
+                    onError = { error ->
+                        currentStatus = "ERROR: $error"
+                        updateNotification(error, "")
+                        stopSelf()
+                    }
+                )
 
                 shoutcastClient?.connectAndStream {
                     val timeIntent = Intent("TIME_UPDATE")
@@ -80,12 +84,10 @@ class StreamService : Service() {
                     LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
                     
                     if (isLineInMode) {
-                        // MODO MEZCLADORA
                         currentSong = "Entrada de Línea (Live)"
                         LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
                         iniciarLineIn()
                     } else {
-                        // MODO AUTO-DJ
                         reproducirPlaylist(uris)
                     }
                 }
@@ -106,7 +108,6 @@ class StreamService : Service() {
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
-        // Usamos DEFAULT o UNPROCESSED para evitar que Android le meta filtros de voz a la música
         val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             MediaRecorder.AudioSource.UNPROCESSED
         } else {

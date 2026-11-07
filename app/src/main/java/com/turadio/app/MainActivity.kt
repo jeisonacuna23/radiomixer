@@ -165,7 +165,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var password by remember { mutableStateOf("") }
     var minutosAutoStop by remember { mutableStateOf("") }
     
-    // 0 = Auto-DJ, 1 = Line-In
     var modoMezcladora by remember { mutableStateOf(false) }
 
     var todosLosArchivos by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
@@ -190,6 +189,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
+            cancionActual = "Entrada de Línea (Live)" // Limpieza
+            trackElapsed = 0L
+            trackDuration = 0L
             val intent = Intent(context, StreamService::class.java).apply {
                 putExtra("IP", ip)
                 putExtra("PORT", puerto.toIntOrNull() ?: 8017)
@@ -360,7 +362,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     ) {
         Text("RadioMixer", style = MaterialTheme.typography.titleLarge)
 
-        // SELECTOR DE MODO
         if (!conectado) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -559,6 +560,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 if (!conectado) {
                     if (modoMezcladora) {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                            cancionActual = "Entrada de Línea (Live)" // FORZAR LIMPIEZA
+                            trackElapsed = 0L
+                            trackDuration = 0L
                             val intent = Intent(context, StreamService::class.java).apply {
                                 putExtra("IP", ip)
                                 putExtra("PORT", puerto.toIntOrNull() ?: 8017)
