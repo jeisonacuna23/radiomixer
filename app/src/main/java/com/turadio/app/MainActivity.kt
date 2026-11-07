@@ -50,7 +50,6 @@ val Context.dataStore by preferencesDataStore(name = "settings")
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // MANTENER LA PANTALLA ENCENDIDA
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
         setContent {
@@ -171,6 +170,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     
     var modoMezcladora by remember { mutableStateOf(false) }
     var grabarMezcladora by remember { mutableStateOf(false) }
+    var isRecordingActive by remember { mutableStateOf(false) }
 
     var todosLosArchivos by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
     var listaReproduccion by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
@@ -279,6 +279,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     "TRACK_PROGRESS_UPDATE" -> {
                         trackElapsed = intent.getLongExtra("PROGRESS", 0L)
                     }
+                    "RECORDING_UPDATE" -> {
+                        isRecordingActive = intent.getBooleanExtra("IS_RECORDING", false)
+                    }
                 }
             }
         }
@@ -287,6 +290,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             addAction("TIME_UPDATE")
             addAction("TRACK_DURATION_UPDATE")
             addAction("TRACK_PROGRESS_UPDATE")
+            addAction("RECORDING_UPDATE")
         }
         LocalBroadcastManager.getInstance(context).registerReceiver(receiver, filter)
         onDispose { LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver) }
@@ -444,6 +448,14 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         Icon(Icons.Default.PlayArrow, contentDescription = "En vivo", tint = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+                        
+                        // INDICADOR DE GRABACIÓN
+                        if (isRecordingActive) {
+                            Spacer(modifier = Modifier.weight(1f))
+                            Icon(Icons.Default.FiberManualRecord, contentDescription = "Grabando", tint = Color.Red, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("GRABANDO", color = Color.Red, style = MaterialTheme.typography.labelMedium)
+                        }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge)
@@ -558,7 +570,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     
                     Spacer(modifier = Modifier.height(16.dp))
                     
-                    // SWITCH PARA GRABAR
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it })
                         Spacer(modifier = Modifier.width(8.dp))

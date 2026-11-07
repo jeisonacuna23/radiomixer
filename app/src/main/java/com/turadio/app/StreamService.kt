@@ -1,16 +1,20 @@
 package com.turadio.app
 
 import android.app.*
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.*
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
+import android.provider.MediaStore
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.nio.ByteBuffer
 
 class StreamService : Service() {
@@ -141,15 +145,38 @@ class StreamService : Service() {
         codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         codec.start()
 
-        // PREPARAR GRABACIÓN SI ESTÁ ACTIVADA
-        var fileOutputStream: FileOutputStream? = null
+        // PREPARAR GRABACIÓN EN CARPETA PÚBLICA (Music/A Voz en Cuello)
+        var outputStream: OutputStream? = null
         if (isRecording) {
             val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
-            val recordDir = getExternalFilesDir(android.os.Environment.DIRECTORY_MUSIC) ?: filesDir
-            val file = File(recordDir, "Grabacion_$timestamp.aac")
-            fileOutputStream = FileOutputStream(file)
-            currentStatus = "Grabando en: ${file.name}"
-            updateNotification(currentStatus, "")
+            val fileName = "Grabacion_$timestamp.aac"
+            
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "audio/aac")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/A Voz en Cuello")
+                    }
+                    val uri = contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        outputStream = contentResolver.openOutputStream(uri)
+                    }
+                } else {
+                    val recordDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "A Voz en Cuello")
+                    if (!recordDir.exists()) recordDir.mkdirs()
+                    val file = File(recordDir, fileName)
+                    outputStream = FileOutputStream(file)
+                }
+                
+                // Avisar a la UI que la grabación inició
+                LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", true))
+                currentStatus = "Transmitiendo y Grabando..."
+                updateNotification(currentStatus, "")
+                
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
         audioRecord.startRecording()
@@ -178,13 +205,11 @@ class StreamService : Service() {
                         outputBuffer.get(aacData)
                         val adtsData = addAdtsHeader(aacData, sampleRate, 2)
                         
-                        // Enviar al servidor
                         shoutcastClient?.sendAudio(adtsData, adtsData.size)
                         
-                        // GUARDAR EN EL ARCHIVO SI ESTÁ GRABANDO
                         if (isRecording) {
                             try {
-                                fileOutputStream?.write(adtsData)
+                                outputStream?.write(adtsData)
                             } catch (e: Exception) {
                                 e.printStackTrace()
                             }
@@ -202,7 +227,9 @@ class StreamService : Service() {
             codec.stop()
             codec.release()
             try {
-                fileOutputStream?.close()
+                outputStream?.close()
+                // Avisar a la UI que la grabación terminó
+                LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
             } catch (e: Exception) {}
         }
     }
