@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -11,8 +12,8 @@ android {
         applicationId = "com.turadio.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15 // Versión 2.4
-        versionName = "2.4"
+        versionCode = 16 // Versión 2.5
+        versionName = "2.5"
     }
 
     signingConfigs {
@@ -60,4 +61,10 @@ dependencies {
     implementation("androidx.localbroadcastmanager:localbroadcastmanager:1.1.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.6.2")
+    
+    // Firebase y Google Auth
+    implementation(platform("com.google.firebase:firebase-bom:32.7.2"))
+    implementation("com.google.firebase:firebase-messaging")
+    implementation("com.google.auth:google-auth-library-oauth2-http:1.20.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

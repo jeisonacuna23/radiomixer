@@ -15,7 +15,14 @@ jobs:
       - name: Decode Keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | tr -d '\n\r ' | base64 --decode > app/release.keystore
-          ls -la app/release.keystore
+          
+      - name: Decode Google Services JSON
+        run: echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | tr -d '\n\r ' | base64 --decode > app/google-services.json
+        
+      - name: Decode Firebase Service Account
+        run: |
+          mkdir -p app/src/main/res/raw
+          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | tr -d '\n\r ' | base64 --decode > app/src/main/res/raw/service_account.json
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew

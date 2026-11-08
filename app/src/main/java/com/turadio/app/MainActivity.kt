@@ -41,9 +41,17 @@ import androidx.datastore.preferences.preferencesDataStore
 import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.FragmentActivity
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.google.auth.oauth2.GoogleCredentials
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 
 val Context.dataStore by preferencesDataStore(name = "settings")
 
@@ -343,25 +351,53 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
-    // FUNCION PARA AVISAR A LA APP RECEPTORA
-    fun enviarAlertaAppReceptora() {
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage("com.radio.generica")
-            if (intent != null) {
-                intent.putExtra("ALERTA_RADIO", "RadioMixer está transmitiendo en vivo")
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-            } else {
-                // Si la app no tiene una pantalla de inicio, intentamos enviar un broadcast
-                val broadcast = Intent("com.radio.generica.ALERTA")
-                broadcast.setPackage("com.radio.generica")
-                broadcast.putExtra("ALERTA_RADIO", "RadioMixer está transmitiendo en vivo")
-                context.sendBroadcast(broadcast)
+    // --- FUNCION QUE ENVIA LA NOTIFICACION A FIREBASE ---
+    fun enviarNotificacionFirebase() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                // Leer la llave secreta
+                val inputStream = context.resources.openRawResource(com.turadio.app.R.raw.service_account)
+                val jsonString = inputStream.bufferedReader().use { it.readText() }
+                val projectId = JSONObject(jsonString).getString("project_id")
+
+                val credentials = GoogleCredentials.fromStream(jsonString.byteInputStream())
+                    .createScoped(listOf("https://www.googleapis.com/auth/firebase.messaging"))
+                credentials.refreshIfExpired()
+                val token = credentials.accessToken.tokenValue
+
+                // Armar el mensaje
+                val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
+                val jsonBody = """
+                    {
+                      "message": {
+                        "topic": "radio_en_vivo",
+                        "notification": {
+                          "title": "¡RadioMixer está en vivo!",
+                          "body": "La transmisión ha comenzado. ¡Entra a escuchar!"
+                        }
+                      }
+                    }
+                """.trimIndent()
+
+                val client = OkHttpClient()
+                val request = Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer $token")
+                    .post(jsonBody.toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    // Si la respuesta no es exitosa, se puede loguear
+                    if (!response.isSuccessful) {
+                        println("Error Firebase: ${response.body?.string()}")
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
+    // ----------------------------------------------------
 
     if (showPinSetup) {
         AlertDialog(
@@ -603,8 +639,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         Button(
             onClick = { 
                 if (!conectado) {
-                    // DISPARAR LA ALERTA A LA APP RECEPTORA
-                    enviarAlertaAppReceptora()
+                    // DISPARAR LA NOTIFICACION PUSH
+                    enviarNotificacionFirebase()
 
                     if (modoMezcladora) {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
