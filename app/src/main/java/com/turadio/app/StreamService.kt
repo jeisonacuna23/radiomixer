@@ -12,6 +12,11 @@ import android.os.IBinder
 import android.provider.MediaStore
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -26,14 +31,15 @@ class StreamService : Service() {
     private var timeoutMinutes = 0
     private var isLineInMode = false
     
-    // Variables de control de estado
     @Volatile private var isRecording = false
     @Volatile private var isStreaming = false
 
-    // Variables globales para poder cerrarlas a la fuerza
     private var outputStream: OutputStream? = null
     private var audioRecord: AudioRecord? = null
     private var mediaCodec: MediaCodec? = null
+    
+    // URL de tu Firebase Realtime Database
+    private val firebaseDbUrl = "https://radiomixer-proyecto-default-rtdb.firebaseio.com/now_playing.json"
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -57,7 +63,8 @@ class StreamService : Service() {
         val uriList = intent?.getStringArrayListExtra("URIS") ?: emptyList()
         isLineInMode = intent?.getBooleanExtra("LINE_IN_MODE", false) ?: false
         isRecording = intent?.getBooleanExtra("RECORD_STREAM", false) ?: false
-        isStreaming = true // Activar bandera de transmisión
+        val nombrePrograma = intent?.getStringExtra("PROGRAM_NAME") ?: "Transmisión Especial"
+        isStreaming = true
 
         val uris = uriList.map { Uri.parse(it) }
         startTime = System.currentTimeMillis()
@@ -104,8 +111,9 @@ class StreamService : Service() {
                     LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
                     
                     if (isLineInMode) {
-                        currentSong = "Entrada de Línea (Live)"
+                        currentSong = nombrePrograma
                         LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
+                        actualizarNowPlaying(nombrePrograma)
                         iniciarLineIn()
                     } else {
                         reproducirPlaylist(uris)
@@ -122,6 +130,30 @@ class StreamService : Service() {
 
         return START_STICKY
     }
+    
+    // FUNCION PARA ESCRIBIR EN LA BASE DE DATOS DE FIREBASE
+    private fun actualizarNowPlaying(titulo: String) {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val json = JSONObject().apply {
+                    put("titulo", titulo)
+                    put("timestamp", System.currentTimeMillis())
+                }
+                
+                val client = OkHttpClient()
+                val request = Request.Builder()
+                    .url(firebaseDbUrl)
+                    .put(json.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) println("Error DB: ${response.code}")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
 
     private fun iniciarLineIn() {
         val sampleRate = 44100
@@ -135,13 +167,7 @@ class StreamService : Service() {
             MediaRecorder.AudioSource.DEFAULT
         }
 
-        audioRecord = AudioRecord(
-            source,
-            sampleRate,
-            channelConfig,
-            audioFormat,
-            minBufSize * 2
-        )
+        audioRecord = AudioRecord(source, sampleRate, channelConfig, audioFormat, minBufSize * 2)
 
         if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
             currentStatus = "Error: No se pudo abrir el micrófono/línea"
@@ -195,7 +221,6 @@ class StreamService : Service() {
         val bufferInfo = MediaCodec.BufferInfo()
 
         try {
-            // EL BUCLE AHORA DEPENDE DE isStreaming
             while (isStreaming) {
                 val pcmBuffer = ByteArray(minBufSize)
                 val read = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
@@ -237,7 +262,6 @@ class StreamService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         } finally {
-            // CIERRE FORZOSO AL SALIR DEL BUCLE
             try { audioRecord?.stop() } catch (e: Exception) {}
             try { audioRecord?.release() } catch (e: Exception) {}
             try { mediaCodec?.stop() } catch (e: Exception) {}
@@ -257,10 +281,20 @@ class StreamService : Service() {
         while (isStreaming && uris.isNotEmpty()) {
             val uriActual = uris[index]
             
-            currentSong = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
+            var nombreCancion = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
+            
+            // LIMPIEZA DEL NOMBRE: Quitar extensión y números al principio
+            nombreCancion = nombreCancion.replace(Regex("\\.(mp3|aac|m4a|wav|ogg)$", RegexOption.IGNORE_CASE), "")
+            nombreCancion = nombreCancion.replace(Regex("^[0-9\\s\\-_.]+"), "")
+            nombreCancion = nombreCancion.replace("_", " ").trim()
+            
+            currentSong = nombreCancion
             val intentUpdate = Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong)
             LocalBroadcastManager.getInstance(this).sendBroadcast(intentUpdate)
             updateNotification("En Vivo", currentSong)
+            
+            // ENVIAR A FIREBASE
+            actualizarNowPlaying(currentSong)
 
             val retriever = MediaMetadataRetriever()
             var trackDurationSeconds = 0L

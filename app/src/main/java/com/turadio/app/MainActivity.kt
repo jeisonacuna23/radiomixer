@@ -174,6 +174,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var puerto by remember { mutableStateOf("8017") }
     var password by remember { mutableStateOf("") }
     var minutosAutoStop by remember { mutableStateOf("") }
+    var nombrePrograma by remember { mutableStateOf("Programa en Vivo") } // NUEVO CAMPO
     
     var modoMezcladora by remember { mutableStateOf(false) }
     var grabarMezcladora by remember { mutableStateOf(false) }
@@ -201,7 +202,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            cancionActual = "Entrada de Línea (Live)"
+            cancionActual = nombrePrograma // Actualizamos la UI local
             trackElapsed = 0L
             trackDuration = 0L
             val intent = Intent(context, StreamService::class.java).apply {
@@ -211,6 +212,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
                 putExtra("LINE_IN_MODE", true)
                 putExtra("RECORD_STREAM", grabarMezcladora)
+                putExtra("PROGRAM_NAME", nombrePrograma) // Enviamos el nombre del programa
             }
             context.startForegroundService(intent)
             conectado = true
@@ -350,7 +352,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
-    // --- FUNCION QUE ENVIA LA NOTIFICACION A FIREBASE ---
     fun enviarNotificacionFirebase() {
         scope.launch(Dispatchers.IO) {
             try {
@@ -364,7 +365,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 val token = credentials.accessToken.tokenValue
 
                 val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
-                // AQUI CAMBIAMOS EL TEXTO DE LA NOTIFICACION
                 val jsonBody = """
                     {
                       "message": {
@@ -545,7 +545,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
 
         if (!modoMezcladora) {
-            // SI NO ESTA CONECTADO, SE MUESTRA EL CATALOGO DE SELECCION
             if (!conectado) {
                 Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Folder, contentDescription = "Carpeta")
@@ -582,7 +581,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 }
             }
 
-            // LA PLAYLIST AHORA SE MUESTRA SIEMPRE (Conectado o no)
             if (listaReproduccion.isNotEmpty()) {
                 Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(
@@ -601,11 +599,10 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                     modifier = Modifier.weight(1f),
                                     maxLines = 1
                                 )
-                                // LAS FLECHAS SOLO FUNCIONAN SI NO ESTA CONECTADO
                                 Row {
                                     IconButton(
                                         onClick = { moverArriba(index) }, 
-                                        enabled = index > 0 && !conectado // Desactivado si está en vivo
+                                        enabled = index > 0 && !conectado
                                     ) {
                                         Icon(
                                             Icons.Default.KeyboardArrowUp, 
@@ -615,7 +612,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                     }
                                     IconButton(
                                         onClick = { moverAbajo(index) }, 
-                                        enabled = index < listaReproduccion.size - 1 && !conectado // Desactivado si está en vivo
+                                        enabled = index < listaReproduccion.size - 1 && !conectado
                                     ) {
                                         Icon(
                                             Icons.Default.KeyboardArrowDown, 
@@ -640,6 +637,16 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     
                     Spacer(modifier = Modifier.height(16.dp))
                     
+                    // NUEVO CAMPO DE TEXTO PARA EL NOMBRE DEL PROGRAMA
+                    OutlinedTextField(
+                        value = nombrePrograma,
+                        onValueChange = { nombrePrograma = it },
+                        label = { Text("Nombre del programa (Para la App Receptora)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it })
                         Spacer(modifier = Modifier.width(8.dp))
@@ -658,7 +665,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
                     if (modoMezcladora) {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            cancionActual = "Entrada de Línea (Live)"
+                            cancionActual = nombrePrograma
                             trackElapsed = 0L
                             trackDuration = 0L
                             val intent = Intent(context, StreamService::class.java).apply {
@@ -668,6 +675,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
                                 putExtra("LINE_IN_MODE", true)
                                 putExtra("RECORD_STREAM", grabarMezcladora)
+                                putExtra("PROGRAM_NAME", nombrePrograma)
                             }
                             context.startForegroundService(intent)
                             conectado = true
