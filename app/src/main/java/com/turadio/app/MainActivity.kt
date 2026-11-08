@@ -46,7 +46,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -355,7 +354,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     fun enviarNotificacionFirebase() {
         scope.launch(Dispatchers.IO) {
             try {
-                // Leer la llave secreta
                 val inputStream = context.resources.openRawResource(com.turadio.app.R.raw.service_account)
                 val jsonString = inputStream.bufferedReader().use { it.readText() }
                 val projectId = JSONObject(jsonString).getString("project_id")
@@ -365,14 +363,14 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 credentials.refreshIfExpired()
                 val token = credentials.accessToken.tokenValue
 
-                // Armar el mensaje
                 val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
+                // AQUI CAMBIAMOS EL TEXTO DE LA NOTIFICACION
                 val jsonBody = """
                     {
                       "message": {
                         "topic": "radio_en_vivo",
                         "notification": {
-                          "title": "¡RadioMixer está en vivo!",
+                          "title": "¡A Voz en Cuello está en vivo!",
                           "body": "La transmisión ha comenzado. ¡Entra a escuchar!"
                         }
                       }
@@ -387,7 +385,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     .build()
 
                 client.newCall(request).execute().use { response ->
-                    // Si la respuesta no es exitosa, se puede loguear
                     if (!response.isSuccessful) {
                         println("Error Firebase: ${response.body?.string()}")
                     }
@@ -397,7 +394,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             }
         }
     }
-    // ----------------------------------------------------
 
     if (showPinSetup) {
         AlertDialog(
@@ -549,41 +545,45 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
 
         if (!modoMezcladora) {
-            Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Folder, contentDescription = "Carpeta")
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Seleccionar Carpeta de Música")
-            }
+            // SI NO ESTA CONECTADO, SE MUESTRA EL CATALOGO DE SELECCION
+            if (!conectado) {
+                Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Folder, contentDescription = "Carpeta")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Seleccionar Carpeta de Música")
+                }
 
-            if (todosLosArchivos.isNotEmpty() && !conectado) {
-                Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 250.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(todosLosArchivos) { cancion ->
-                        val isSelected = listaReproduccion.contains(cancion)
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = isSelected,
-                                    onCheckedChange = { toggleSeleccion(cancion) }
-                                )
-                                Text(
-                                    text = cancion.second,
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 1
-                                )
+                if (todosLosArchivos.isNotEmpty()) {
+                    Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 200.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(todosLosArchivos) { cancion ->
+                            val isSelected = listaReproduccion.contains(cancion)
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = isSelected,
+                                        onCheckedChange = { toggleSeleccion(cancion) }
+                                    )
+                                    Text(
+                                        text = cancion.second,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            if (listaReproduccion.isNotEmpty() && !conectado) {
+            // LA PLAYLIST AHORA SE MUESTRA SIEMPRE (Conectado o no)
+            if (listaReproduccion.isNotEmpty()) {
                 Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
                 LazyColumn(
                     modifier = Modifier.heightIn(max = 250.dp),
@@ -601,12 +601,27 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                     modifier = Modifier.weight(1f),
                                     maxLines = 1
                                 )
+                                // LAS FLECHAS SOLO FUNCIONAN SI NO ESTA CONECTADO
                                 Row {
-                                    IconButton(onClick = { moverArriba(index) }, enabled = index > 0) {
-                                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) MaterialTheme.colorScheme.primary else Color.Gray)
+                                    IconButton(
+                                        onClick = { moverArriba(index) }, 
+                                        enabled = index > 0 && !conectado // Desactivado si está en vivo
+                                    ) {
+                                        Icon(
+                                            Icons.Default.KeyboardArrowUp, 
+                                            contentDescription = "Subir", 
+                                            tint = if (index > 0 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray
+                                        )
                                     }
-                                    IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1) {
-                                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1) MaterialTheme.colorScheme.primary else Color.Gray)
+                                    IconButton(
+                                        onClick = { moverAbajo(index) }, 
+                                        enabled = index < listaReproduccion.size - 1 && !conectado // Desactivado si está en vivo
+                                    ) {
+                                        Icon(
+                                            Icons.Default.KeyboardArrowDown, 
+                                            contentDescription = "Bajar", 
+                                            tint = if (index < listaReproduccion.size - 1 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray
+                                        )
                                     }
                                 }
                             }
@@ -639,7 +654,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         Button(
             onClick = { 
                 if (!conectado) {
-                    // DISPARAR LA NOTIFICACION PUSH
                     enviarNotificacionFirebase()
 
                     if (modoMezcladora) {
