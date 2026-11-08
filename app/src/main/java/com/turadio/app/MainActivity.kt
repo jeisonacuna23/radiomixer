@@ -343,6 +343,26 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
+    // FUNCION PARA AVISAR A LA APP RECEPTORA
+    fun enviarAlertaAppReceptora() {
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage("com.radio.generica")
+            if (intent != null) {
+                intent.putExtra("ALERTA_RADIO", "RadioMixer está transmitiendo en vivo")
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            } else {
+                // Si la app no tiene una pantalla de inicio, intentamos enviar un broadcast
+                val broadcast = Intent("com.radio.generica.ALERTA")
+                broadcast.setPackage("com.radio.generica")
+                broadcast.putExtra("ALERTA_RADIO", "RadioMixer está transmitiendo en vivo")
+                context.sendBroadcast(broadcast)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     if (showPinSetup) {
         AlertDialog(
             onDismissRequest = { },
@@ -583,6 +603,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         Button(
             onClick = { 
                 if (!conectado) {
+                    // DISPARAR LA ALERTA A LA APP RECEPTORA
+                    enviarAlertaAppReceptora()
+
                     if (modoMezcladora) {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                             cancionActual = "Entrada de Línea (Live)"
@@ -628,7 +651,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         }
                     }
                 } else {
-                    // AL DETENER, LIMPIAMOS EL ESTADO VISUAL INMEDIATAMENTE
                     isRecordingActive = false
                     val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
                     context.startService(intent)
