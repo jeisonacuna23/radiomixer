@@ -21,7 +21,11 @@ class ShoutcastClient(
             try {
                 onStatus("Conectando al puerto $port...")
                 socket = Socket(ip, port)
-                socket?.soTimeout = 5000
+                
+                // ESTO EVITA QUE SE ACUMULEN LOS PAQUETES
+                socket?.tcpNoDelay = true
+                
+                socket?.soTimeout = 10000
                 out = DataOutputStream(socket?.getOutputStream())
 
                 onStatus("Enviando contraseña...")
@@ -44,7 +48,6 @@ class ShoutcastClient(
                 }
 
                 onStatus("Conectado. Enviando cabeceras...")
-                // AQUÍ CAMBIAMOS A AAC
                 val headers = "icy-name: RadioMixer\r\n" +
                               "icy-genre: Varios\r\n" +
                               "icy-br: 64\r\n" +
@@ -52,7 +55,7 @@ class ShoutcastClient(
                 out?.write(headers.toByteArray())
                 out?.flush()
                 
-                onStatus("¡En Vivo (AAC)!")
+                onStatus("¡En Vivo!")
                 onConnected()
 
             } catch (e: Exception) {

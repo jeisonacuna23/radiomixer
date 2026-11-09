@@ -61,31 +61,23 @@ class StreamService : Service() {
             return START_NOT_STICKY
         }
 
-        // CAMBIO EN VIVO CORREGIDO
         if (intent?.action == "TOGGLE_LIVE_MIC") {
             val nuevoEstado = intent.getBooleanExtra("IS_LIVE_MIC", false)
             configProgramName = intent.getStringExtra("PROGRAM_NAME") ?: "Programa en Vivo"
             
             if (nuevoEstado && !isLiveMicActive) {
-                // ACTIVAR MICRÓFONO
                 isLiveMicActive = true
                 currentSong = configProgramName
                 LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
                 actualizarNowPlaying(configProgramName)
-                
-                // ACTUALIZAR TIPO DE FOREGROUND SERVICE (Obligatorio en Android 14)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val notif = buildNotification("En Vivo (Micrófono)", currentSong)
                     startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
                 }
-                
                 iniciarLineIn()
             } else if (!nuevoEstado && isLiveMicActive) {
-                // DESACTIVAR MICRÓFONO
                 isLiveMicActive = false
                 stopMicrophone()
-                
-                // VOLVER A FOREGROUND SERVICE DE MÚSICA
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val notif = buildNotification("En Vivo (Música)", currentSong)
                     startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
@@ -151,7 +143,7 @@ class StreamService : Service() {
                 val credentials = GoogleCredentials.fromStream(jsonString.byteInputStream()).createScoped(listOf("https://www.googleapis.com/auth/firebase.messaging"))
                 credentials.refreshIfExpired()
                 val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
-                val jsonPush = """{"message": {"topic": "radio_en_vivo","notification": {"title": "A Voz en Cuello","body": "La transmisión ha finalizado."}}}"""
+                val jsonPush = """{"message": {"topic": "radio_en_vivo","notification": {"title": "A voz en cuello","body": "La transmisión ha finalizado."}}}"""
                 client.newCall(Request.Builder().url(url).addHeader("Authorization", "Bearer ${credentials.accessToken.tokenValue}").post(jsonPush.toRequestBody("application/json".toMediaType())).build()).execute().close()
             } catch (e: Exception) { e.printStackTrace() }
         }
@@ -384,7 +376,12 @@ class StreamService : Service() {
                 val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
                 val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
                 val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
-                if (tiempoEspera > 0) Thread.sleep(tiempoEspera.toLong())
+                
+                // EL CAMBIO ESTÁ AQUÍ: Nunca dormir más de 200 ms
+                if (tiempoEspera > 0) {
+                    val esperaReal = minOf(tiempoEspera.toLong(), 200L)
+                    Thread.sleep(esperaReal)
+                }
             }
         } catch (e: Exception) {
         } finally {
