@@ -164,9 +164,11 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var mensajeEstado by remember { mutableStateOf("No hay carpeta seleccionada") }
     var conectado by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
-
-    // NUEVO: Estado para los oyentes
     var oyentes by remember { mutableIntStateOf(0) }
+
+    // ESTADOS EN VIVO
+    var isLiveMicUi by remember { mutableStateOf(false) }
+    var liveProgramName by remember { mutableStateOf("Programa en Vivo") }
 
     var startTime by remember { mutableLongStateOf(0L) }
     var timeoutMinutes by remember { mutableIntStateOf(0) }
@@ -187,6 +189,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         if (isGranted) {
             cancionActual = nombrePrograma
             trackElapsed = 0L; trackDuration = 0L
+            isLiveMicUi = true // Arrancó en mezcladora
+            liveProgramName = nombrePrograma
             val intent = Intent(context, StreamService::class.java).apply {
                 putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
@@ -225,7 +229,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
-    // RELOJES
     LaunchedEffect(conectado, startTime, timeoutMinutes) {
         if (conectado && startTime > 0) {
             while (true) {
@@ -240,7 +243,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
-    // CONTADOR DE OYENTES
     LaunchedEffect(conectado) {
         if (conectado) {
             while (true) {
@@ -250,17 +252,13 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     client.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
                             val json = JSONObject(response.body?.string() ?: "{}")
-                            if (json.has("currentlisteners")) {
-                                oyentes = json.getInt("currentlisteners")
-                            }
+                            if (json.has("currentlisteners")) oyentes = json.getInt("currentlisteners")
                         }
                     }
-                } catch (e: Exception) { /* Ignorar si falla la red */ }
-                delay(20000L) // Cada 20 segundos
+                } catch (e: Exception) { }
+                delay(20000L)
             }
-        } else {
-            oyentes = 0
-        }
+        } else oyentes = 0
     }
 
     DisposableEffect(Unit) {
@@ -330,6 +328,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
+    // MODALES
     if (showPinSetup) {
         AlertDialog(onDismissRequest = { }, title = { Text("Configurar Seguridad") },
             text = {
@@ -402,7 +401,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
                         
-                        // INDICADOR DE OYENTES AQUÍ
                         Spacer(modifier = Modifier.weight(1f))
                         Icon(Icons.Default.People, contentDescription = "Oyentes", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(4.dp))
@@ -413,10 +411,63 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                             Icon(Icons.Default.FiberManualRecord, contentDescription = "Grabando", tint = Color.Red, modifier = Modifier.size(16.dp))
                         }
                     }
+                    
                     Spacer(modifier = Modifier.height(8.dp))
+                    // SWITCH EN VIVO AQUI
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Switch(
+                            checked = isLiveMicUi, 
+                            onCheckedChange = { isChecked ->
+                                isLiveMicUi = isChecked
+                                if (isChecked) {
+                                    // Pedir permiso de micrófono si no lo tiene
+                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                        val intent = Intent(context, StreamService::class.java).apply {
+                                            action = "TOGGLE_LIVE_MIC"
+                                            putExtra("IS_LIVE_MIC", true)
+                                            putExtra("PROGRAM_NAME", liveProgramName)
+                                        }
+                                        context.startService(intent)
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                        isLiveMicUi = false // Revertir si no da permiso
+                                    }
+                                } else {
+                                    val intent = Intent(context, StreamService::class.java).apply {
+                                        action = "TOGGLE_LIVE_MIC"
+                                        putExtra("IS_LIVE_MIC", false)
+                                    }
+                                    context.startService(intent)
+                                }
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(if (isLiveMicUi) "Modo Mezcladora (En vivo)" else "Modo Auto-DJ", style = MaterialTheme.typography.bodyMedium)
+                    }
+
+                    // CAMPO DE TEXTO PARA EL PROGRAMA (solo si el switch está activo)
+                    if (isLiveMicUi) {
+                        OutlinedTextField(
+                            value = liveProgramName,
+                            onValueChange = { 
+                                liveProgramName = it
+                                // Enviar el texto actualizado al servicio
+                                val intent = Intent(context, StreamService::class.java).apply {
+                                    action = "TOGGLE_LIVE_MIC"
+                                    putExtra("IS_LIVE_MIC", true)
+                                    putExtra("PROGRAM_NAME", liveProgramName)
+                                }
+                                context.startService(intent)
+                            },
+                            label = { Text("Nombre del programa (Firebase)") },
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        )
+                    }
+
+                    Divider(modifier = Modifier.padding(vertical = 8.dp))
                     Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge)
                     
-                    if (!modoMezcladora) {
+                    if (!isLiveMicUi) {
                         Spacer(modifier = Modifier.height(8.dp))
                         if (trackDuration > 0) {
                             LinearProgressIndicator(progress = { trackElapsed.toFloat() / trackDuration.toFloat() }, modifier = Modifier.fillMaxWidth())
@@ -444,8 +495,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             }
         }
 
-        if (!modoMezcladora) {
-            if (!conectado) {
+        if (!conectado) {
+            if (!modoMezcladora) {
                 Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Folder, contentDescription = "Carpeta"); Spacer(modifier = Modifier.width(8.dp)); Text("Seleccionar Carpeta de Música")
                 }
@@ -464,39 +515,39 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         }
                     }
                 }
-            }
 
-            if (listaReproduccion.isNotEmpty()) {
-                Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
-                LazyColumn(modifier = Modifier.heightIn(max = 250.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    itemsIndexed(listaReproduccion) { index, cancion ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
-                                Row {
-                                    IconButton(onClick = { moverArriba(index) }, enabled = index > 0 && !conectado) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray) }
-                                    IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1 && !conectado) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray) }
+                if (listaReproduccion.isNotEmpty()) {
+                    Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
+                    LazyColumn(modifier = Modifier.heightIn(max = 250.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        itemsIndexed(listaReproduccion) { index, cancion ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
+                                    Row {
+                                        IconButton(onClick = { moverArriba(index) }, enabled = index > 0) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) MaterialTheme.colorScheme.primary else Color.Gray) }
+                                        IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1) MaterialTheme.colorScheme.primary else Color.Gray) }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-        } else if (!conectado) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.SettingsInputComponent, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.secondary)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    OutlinedTextField(value = nombrePrograma, onValueChange = { nombrePrograma = it }, label = { Text("Nombre del programa") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it })
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Grabar transmisión localmente", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.SettingsInputComponent, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.secondary)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedTextField(value = nombrePrograma, onValueChange = { nombrePrograma = it }, label = { Text("Nombre del programa") }, modifier = Modifier.fillMaxWidth())
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it })
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Grabar transmisión localmente", style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                 }
             }
@@ -510,6 +561,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 if (modoMezcladora) {
                     if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                         cancionActual = nombrePrograma; trackElapsed = 0L; trackDuration = 0L
+                        isLiveMicUi = true
+                        liveProgramName = nombrePrograma
                         val intent = Intent(context, StreamService::class.java).apply {
                             putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
                             putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
@@ -526,6 +579,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                             settings[stringPreferencesKey("PORT")] = puerto
                             settings[stringPreferencesKey("PASS")] = password
                         }
+                        isLiveMicUi = false
                         val intent = Intent(context, StreamService::class.java).apply {
                             putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
                             putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)

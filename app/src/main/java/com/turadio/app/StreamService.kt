@@ -30,15 +30,16 @@ class StreamService : Service() {
     private var currentSong = ""
     private var startTime = 0L
     private var timeoutMinutes = 0
-    private var isLineInMode = false
     
     @Volatile private var isRecording = false
     @Volatile private var isStreaming = false
     @Volatile private var isConnected = false
+    @Volatile private var isLiveMicActive = false // NUEVO: Switch en vivo
 
     private var outputStream: OutputStream? = null
     private var audioRecord: AudioRecord? = null
     private var mediaCodec: MediaCodec? = null
+    private var micJob: Job? = null
     
     private val firebaseDbUrl = "https://radiomixer-proyecto-default-rtdb.firebaseio.com/now_playing.json"
 
@@ -47,6 +48,7 @@ class StreamService : Service() {
     private var configPass = ""
     private var configUris: List<Uri> = emptyList()
     private var configProgramName = ""
+    private var configModeMezcladora = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -54,9 +56,25 @@ class StreamService : Service() {
         if (intent?.action == "STOP") {
             isStreaming = false
             isRecording = false
-            notificarDesconexion() // AVISAR QUE SE DETUVO
+            notificarDesconexion()
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        // CAMBIO EN VIVO
+        if (intent?.action == "TOGGLE_LIVE_MIC") {
+            isLiveMicActive = intent.getBooleanExtra("IS_LIVE_MIC", false)
+            configProgramName = intent.getStringExtra("PROGRAM_NAME") ?: "Programa en Vivo"
+            
+            if (isLiveMicActive) {
+                currentSong = configProgramName
+                LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
+                actualizarNowPlaying(configProgramName)
+                iniciarLineIn()
+            } else {
+                stopMicrophone()
+            }
+            return START_STICKY
         }
 
         shoutcastClient?.disconnect()
@@ -69,20 +87,21 @@ class StreamService : Service() {
         configPass = intent?.getStringExtra("PASS") ?: ""
         timeoutMinutes = intent?.getIntExtra("TIMEOUT_MINUTES", 0) ?: 0
         val uriList = intent?.getStringArrayListExtra("URIS") ?: emptyList()
-        isLineInMode = intent?.getBooleanExtra("LINE_IN_MODE", false) ?: false
+        configModeMezcladora = intent?.getBooleanExtra("LINE_IN_MODE", false) ?: false
         isRecording = intent?.getBooleanExtra("RECORD_STREAM", false) ?: false
         configProgramName = intent?.getStringExtra("PROGRAM_NAME") ?: "Transmisión Especial"
         
         configUris = uriList.map { Uri.parse(it) }
         startTime = System.currentTimeMillis()
         isStreaming = true
+        isLiveMicActive = configModeMezcladora // Si arrancó en mezcladora, el switch empieza activo
 
         createNotificationChannel()
         updateNotification("Conectando...", "")
         
         val initialNotif = buildNotification("Conectando...", "")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val type = if (isLineInMode) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            val type = if (configModeMezcladora) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             startForeground(1, initialNotif, type)
         } else {
             startForeground(1, initialNotif)
@@ -101,44 +120,22 @@ class StreamService : Service() {
         return START_STICKY
     }
 
-    // NOTIFICAR QUE SE DETUVO
     private fun notificarDesconexion() {
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {
             try {
-                // 1. Actualizar Base de Datos (Pizarra)
-                val jsonDb = JSONObject().apply {
-                    put("titulo", "Fuera del aire")
-                    put("timestamp", System.currentTimeMillis())
-                }
+                val jsonDb = JSONObject().apply { put("titulo", "Fuera del aire"); put("timestamp", System.currentTimeMillis()) }
                 val client = OkHttpClient()
                 client.newCall(Request.Builder().url(firebaseDbUrl).put(jsonDb.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
 
-                // 2. Enviar Notificación Push
                 val inputStream = resources.openRawResource(com.turadio.app.R.raw.service_account)
                 val jsonString = inputStream.bufferedReader().use { it.readText() }
                 val projectId = JSONObject(jsonString).getString("project_id")
                 val credentials = GoogleCredentials.fromStream(jsonString.byteInputStream()).createScoped(listOf("https://www.googleapis.com/auth/firebase.messaging"))
                 credentials.refreshIfExpired()
-                
                 val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
-                val jsonPush = """
-                    {
-                      "message": {
-                        "topic": "radio_en_vivo",
-                        "notification": {
-                          "title": "A Voz en Cuello",
-                          "body": "La transmisión ha finalizado."
-                        }
-                      }
-                    }
-                """.trimIndent()
-
-                client.newCall(
-                    Request.Builder().url(url).addHeader("Authorization", "Bearer ${credentials.accessToken.tokenValue}")
-                    .post(jsonPush.toRequestBody("application/json".toMediaType())).build()
-                ).execute().close()
-
+                val jsonPush = """{"message": {"topic": "radio_en_vivo","notification": {"title": "A Voz en Cuello","body": "La transmisión ha finalizado."}}}"""
+                client.newCall(Request.Builder().url(url).addHeader("Authorization", "Bearer ${credentials.accessToken.tokenValue}").post(jsonPush.toRequestBody("application/json".toMediaType())).build()).execute().close()
             } catch (e: Exception) { e.printStackTrace() }
         }
     }
@@ -148,29 +145,21 @@ class StreamService : Service() {
             try {
                 shoutcastClient = ShoutcastClient(
                     configIp, configPort, configPass,
-                    onStatus = { status ->
-                        currentStatus = status
-                        updateNotification(status, currentSong)
-                    },
+                    onStatus = { status -> currentStatus = status; updateNotification(status, currentSong) },
                     onError = { error ->
                         isConnected = false
                         currentStatus = "Señal perdida. Reconectando..."
                         updateNotification(currentStatus, "Esperando red...")
-                        serviceScope.launch {
-                            delay(5000)
-                            if (isStreaming) conectarAServidor()
-                        }
+                        serviceScope.launch { delay(5000); if (isStreaming) conectarAServidor() }
                     }
                 )
 
                 shoutcastClient?.connectAndStream {
                     isConnected = true
-                    val timeIntent = Intent("TIME_UPDATE")
-                        .putExtra("START_TIME", startTime)
-                        .putExtra("TIMEOUT", timeoutMinutes)
+                    val timeIntent = Intent("TIME_UPDATE").putExtra("START_TIME", startTime).putExtra("TIMEOUT", timeoutMinutes)
                     LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
                     
-                    if (isLineInMode) {
+                    if (isLiveMicActive) {
                         currentSong = configProgramName
                         LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
                         actualizarNowPlaying(configProgramName)
@@ -181,10 +170,7 @@ class StreamService : Service() {
                 }
             } catch (e: Exception) {
                 isConnected = false
-                serviceScope.launch {
-                    delay(5000)
-                    if (isStreaming) conectarAServidor()
-                }
+                serviceScope.launch { delay(5000); if (isStreaming) conectarAServidor() }
             }
         }
     }
@@ -192,10 +178,7 @@ class StreamService : Service() {
     private fun actualizarNowPlaying(titulo: String) {
         serviceScope.launch(Dispatchers.IO) {
             try {
-                val json = JSONObject().apply {
-                    put("titulo", titulo)
-                    put("timestamp", System.currentTimeMillis())
-                }
+                val json = JSONObject().apply { put("titulo", titulo); put("timestamp", System.currentTimeMillis()) }
                 val client = OkHttpClient()
                 client.newCall(Request.Builder().url(firebaseDbUrl).put(json.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
             } catch (e: Exception) { e.printStackTrace() }
@@ -203,89 +186,107 @@ class StreamService : Service() {
     }
 
     private fun iniciarLineIn() {
-        val sampleRate = 44100
-        val channelConfig = AudioFormat.CHANNEL_IN_STEREO
-        val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-        val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+        stopMicrophone() // Prevenir doble hilo
+        micJob = serviceScope.launch {
+            val sampleRate = 44100
+            val channelConfig = AudioFormat.CHANNEL_IN_STEREO
+            val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+            val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
-        val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.DEFAULT
+            val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.DEFAULT
 
-        audioRecord = AudioRecord(source, sampleRate, channelConfig, audioFormat, minBufSize * 2)
-        if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) { stopSelf(); return }
+            audioRecord = AudioRecord(source, sampleRate, channelConfig, audioFormat, minBufSize * 2)
+            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) return@launch
 
-        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 2).apply {
-            setInteger(MediaFormat.KEY_BIT_RATE, 64000)
-            setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-            setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
-        }
-        mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        mediaCodec?.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        mediaCodec?.start()
+            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 2).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, 64000)
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+            }
+            mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            mediaCodec?.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            mediaCodec?.start()
 
-        if (isRecording) {
-            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
-            val fileName = "Grabacion_$timestamp.aac"
+            if (isRecording && outputStream == null) {
+                val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
+                val fileName = "Grabacion_$timestamp.aac"
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val values = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(MediaStore.MediaColumns.MIME_TYPE, "audio/aac")
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/A Voz en Cuello")
+                        }
+                        val uri = contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+                        if (uri != null) outputStream = contentResolver.openOutputStream(uri)
+                    } else {
+                        val recordDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "A Voz en Cuello")
+                        if (!recordDir.exists()) recordDir.mkdirs()
+                        outputStream = FileOutputStream(File(recordDir, fileName))
+                    }
+                    LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", true))
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+
+            audioRecord?.startRecording()
+            val bufferInfo = MediaCodec.BufferInfo()
+
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val values = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                        put(MediaStore.MediaColumns.MIME_TYPE, "audio/aac")
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/A Voz en Cuello")
+                while (isStreaming && isConnected && isLiveMicActive) {
+                    val pcmBuffer = ByteArray(minBufSize)
+                    val read = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
+                    if (read > 0) {
+                        val inputIndex = mediaCodec?.dequeueInputBuffer(10000) ?: -1
+                        if (inputIndex >= 0) {
+                            val inputBuffer = mediaCodec?.getInputBuffer(inputIndex)
+                            inputBuffer?.clear(); inputBuffer?.put(pcmBuffer, 0, read)
+                            mediaCodec?.queueInputBuffer(inputIndex, 0, read, System.nanoTime() / 1000, 0)
+                        }
                     }
-                    val uri = contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
-                    if (uri != null) outputStream = contentResolver.openOutputStream(uri)
-                } else {
-                    val recordDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "A Voz en Cuello")
-                    if (!recordDir.exists()) recordDir.mkdirs()
-                    outputStream = FileOutputStream(File(recordDir, fileName))
-                }
-                LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", true))
-            } catch (e: Exception) { e.printStackTrace() }
-        }
 
-        audioRecord?.startRecording()
-        val bufferInfo = MediaCodec.BufferInfo()
-
-        try {
-            while (isStreaming && isConnected) {
-                val pcmBuffer = ByteArray(minBufSize)
-                val read = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
-                if (read > 0) {
-                    val inputIndex = mediaCodec?.dequeueInputBuffer(10000) ?: -1
-                    if (inputIndex >= 0) {
-                        val inputBuffer = mediaCodec?.getInputBuffer(inputIndex)
-                        inputBuffer?.clear(); inputBuffer?.put(pcmBuffer, 0, read)
-                        mediaCodec?.queueInputBuffer(inputIndex, 0, read, System.nanoTime() / 1000, 0)
+                    var outputIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, 0) ?: -1
+                    while (outputIndex >= 0) {
+                        val outputBuffer = mediaCodec?.getOutputBuffer(outputIndex)
+                        if (outputBuffer != null && bufferInfo.size > 0) {
+                            val aacData = ByteArray(bufferInfo.size)
+                            outputBuffer.position(bufferInfo.offset); outputBuffer.get(aacData)
+                            val adtsData = addAdtsHeader(aacData, sampleRate, 2)
+                            if (isStreaming && isConnected) shoutcastClient?.sendAudio(adtsData, adtsData.size)
+                            if (isRecording) { try { outputStream?.write(adtsData) } catch (e: Exception) {} }
+                        }
+                        mediaCodec?.releaseOutputBuffer(outputIndex, false)
+                        outputIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, 0) ?: -1
                     }
                 }
-
-                var outputIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, 0) ?: -1
-                while (outputIndex >= 0) {
-                    val outputBuffer = mediaCodec?.getOutputBuffer(outputIndex)
-                    if (outputBuffer != null && bufferInfo.size > 0) {
-                        val aacData = ByteArray(bufferInfo.size)
-                        outputBuffer.position(bufferInfo.offset); outputBuffer.get(aacData)
-                        val adtsData = addAdtsHeader(aacData, sampleRate, 2)
-                        if (isStreaming && isConnected) shoutcastClient?.sendAudio(adtsData, adtsData.size)
-                        if (isRecording) { try { outputStream?.write(adtsData) } catch (e: Exception) {} }
-                    }
-                    mediaCodec?.releaseOutputBuffer(outputIndex, false)
-                    outputIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, 0) ?: -1
+            } catch (e: Exception) {
+            } finally {
+                try { audioRecord?.stop(); audioRecord?.release() } catch (e: Exception) {}
+                try { mediaCodec?.stop(); mediaCodec?.release() } catch (e: Exception) {}
+                if (!isLiveMicActive) { // Solo cerrar el archivo si de verdad salimos del modo micro
+                    try { outputStream?.flush(); outputStream?.close(); outputStream = null } catch (e: Exception) {}
+                    isRecording = false
+                    LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
                 }
             }
-        } catch (e: Exception) {
-        } finally {
-            try { audioRecord?.stop(); audioRecord?.release() } catch (e: Exception) {}
-            try { mediaCodec?.stop(); mediaCodec?.release() } catch (e: Exception) {}
-            try { outputStream?.flush(); outputStream?.close() } catch (e: Exception) {}
-            isRecording = false
-            LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
         }
+    }
+
+    private fun stopMicrophone() {
+        micJob?.cancel()
+        micJob = null
     }
 
     private fun reproducirPlaylist(uris: List<Uri>) {
         var index = 0
         while (isStreaming && isConnected && uris.isNotEmpty()) {
+            if (isLiveMicActive) {
+                // Si el switch se activa, la música se pausa y salta a la siguiente
+                index++
+                if (index >= uris.size) index = 0
+                Thread.sleep(500)
+                continue
+            }
+
             val uriActual = uris[index]
             
             var nombreCancion = uriActual.lastPathSegment?.substringAfterLast("/")?.substringAfterLast(":") ?: "Canción"
@@ -345,7 +346,7 @@ class StreamService : Service() {
             val tiempoInicio = System.currentTimeMillis()
             var lastBroadcastedSecond = -1L
 
-            while (isStreaming && isConnected) {
+            while (isStreaming && isConnected && !isLiveMicActive) { // Si el switch se activa, sale del bucle
                 val sampleSize = extractor.readSampleData(buffer, 0)
                 if (sampleSize < 0) break
 
@@ -393,7 +394,7 @@ class StreamService : Service() {
     }
 
     override fun onDestroy() {
-        isStreaming = false; isRecording = false
+        isStreaming = false; isRecording = false; isLiveMicActive = false
         try { outputStream?.flush(); outputStream?.close() } catch (e: Exception) {}
         try { audioRecord?.stop(); audioRecord?.release() } catch (e: Exception) {}
         try { mediaCodec?.stop(); mediaCodec?.release() } catch (e: Exception) {}
