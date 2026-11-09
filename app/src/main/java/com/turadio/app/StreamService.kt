@@ -33,13 +33,20 @@ class StreamService : Service() {
     
     @Volatile private var isRecording = false
     @Volatile private var isStreaming = false
-    @Volatile private var isConnected = false // NUEVO: Bandera de conexión
+    @Volatile private var isConnected = false
 
     private var outputStream: OutputStream? = null
     private var audioRecord: AudioRecord? = null
     private var mediaCodec: MediaCodec? = null
     
     private val firebaseDbUrl = "https://radiomixer-proyecto-default-rtdb.firebaseio.com/now_playing.json"
+
+    // Variables para guardar los datos y poder reconectar
+    private var configIp = ""
+    private var configPort = 8017
+    private var configPass = ""
+    private var configUris: List<Uri> = emptyList()
+    private var configProgramName = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -51,23 +58,24 @@ class StreamService : Service() {
             return START_NOT_STICKY
         }
 
+        // Limpieza inicial
         shoutcastClient?.disconnect()
         shoutcastClient = null
         serviceScope.cancel()
         serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-        val ip = intent?.getStringExtra("IP") ?: return START_NOT_STICKY
-        val port = intent?.getIntExtra("PORT", 8017) ?: 8017
-        val pass = intent?.getStringExtra("PASS") ?: ""
+        configIp = intent?.getStringExtra("IP") ?: return START_NOT_STICKY
+        configPort = intent?.getIntExtra("PORT", 8017) ?: 8017
+        configPass = intent?.getStringExtra("PASS") ?: ""
         timeoutMinutes = intent?.getIntExtra("TIMEOUT_MINUTES", 0) ?: 0
         val uriList = intent?.getStringArrayListExtra("URIS") ?: emptyList()
         isLineInMode = intent?.getBooleanExtra("LINE_IN_MODE", false) ?: false
         isRecording = intent?.getBooleanExtra("RECORD_STREAM", false) ?: false
-        val nombrePrograma = intent?.getStringExtra("PROGRAM_NAME") ?: "Transmisión Especial"
-        isStreaming = true
-
-        val uris = uriList.map { Uri.parse(it) }
+        configProgramName = intent?.getStringExtra("PROGRAM_NAME") ?: "Transmisión Especial"
+        
+        configUris = uriList.map { Uri.parse(it) }
         startTime = System.currentTimeMillis()
+        isStreaming = true
 
         createNotificationChannel()
         updateNotification("Conectando...", "")
@@ -88,56 +96,64 @@ class StreamService : Service() {
             }
         }
 
-        // BUCLE DE RECONEXIÓN AUTOMÁTICA
-        serviceScope.launch {
-            while (isStreaming) {
-                isConnected = false
-                try {
-                    shoutcastClient = ShoutcastClient(
-                        ip, port, pass,
-                        onStatus = { status ->
-                            currentStatus = status
-                            updateNotification(status, currentSong)
-                        },
-                        onError = { error ->
-                            isConnected = false
-                            currentStatus = "Señal perdida. Reconectando..."
-                            updateNotification(currentStatus, "Esperando red...")
-                            // Ya no llamamos a stopSelf() aquí para permitir la reconexión
-                        }
-                    )
+        // Iniciar la conexión por primera vez
+        conectarAServidor()
 
-                    shoutcastClient?.connectAndStream {
-                        isConnected = true
-                        val timeIntent = Intent("TIME_UPDATE")
-                            .putExtra("START_TIME", startTime)
-                            .putExtra("TIMEOUT", timeoutMinutes)
-                        LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
-                        
-                        if (isLineInMode) {
-                            currentSong = nombrePrograma
-                            LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
-                            actualizarNowPlaying(nombrePrograma)
-                            iniciarLineIn()
-                        } else {
-                            reproducirPlaylist(uris)
+        return START_STICKY
+    }
+
+    // FUNCION DE CONEXION MEJORADA
+    private fun conectarAServidor() {
+        serviceScope.launch {
+            try {
+                shoutcastClient = ShoutcastClient(
+                    configIp, configPort, configPass,
+                    onStatus = { status ->
+                        currentStatus = status
+                        updateNotification(status, currentSong)
+                    },
+                    onError = { error ->
+                        isConnected = false
+                        currentStatus = "Señal perdida. Reconectando..."
+                        updateNotification(currentStatus, "Esperando red...")
+                        // Si hay un error, esperamos 5 segundos y reintentamos (solo si el usuario no ha detenido la app)
+                        serviceScope.launch {
+                            delay(5000)
+                            if (isStreaming) {
+                                conectarAServidor()
+                            }
                         }
                     }
-                } catch (e: Exception) {
-                    isConnected = false
-                }
+                )
 
-                // Si nos desconectamos pero el usuario no ha detenido la app, intentamos reconectar
-                if (isStreaming) {
-                    shoutcastClient?.disconnect()
-                    currentStatus = "Reconectando en 5 segundos..."
-                    updateNotification(currentStatus, "Fallo de red")
+                // El cliente se conecta y empieza a transmitir
+                shoutcastClient?.connectAndStream {
+                    isConnected = true
+                    val timeIntent = Intent("TIME_UPDATE")
+                        .putExtra("START_TIME", startTime)
+                        .putExtra("TIMEOUT", timeoutMinutes)
+                    LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(timeIntent)
+                    
+                    if (isLineInMode) {
+                        currentSong = configProgramName
+                        LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
+                        actualizarNowPlaying(configProgramName)
+                        iniciarLineIn()
+                    } else {
+                        reproducirPlaylist(configUris)
+                    }
+                }
+            } catch (e: Exception) {
+                isConnected = false
+                // Si falla de inmediato (ej. no hay internet en absoluto), reintentamos
+                serviceScope.launch {
                     delay(5000)
+                    if (isStreaming) {
+                        conectarAServidor()
+                    }
                 }
             }
         }
-
-        return START_STICKY
     }
     
     private fun actualizarNowPlaying(titulo: String) {
