@@ -11,6 +11,7 @@ import android.os.Environment
 import android.os.IBinder
 import android.provider.MediaStore
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.google.auth.oauth2.GoogleCredentials
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -41,7 +42,6 @@ class StreamService : Service() {
     
     private val firebaseDbUrl = "https://radiomixer-proyecto-default-rtdb.firebaseio.com/now_playing.json"
 
-    // Variables para guardar los datos y poder reconectar
     private var configIp = ""
     private var configPort = 8017
     private var configPass = ""
@@ -54,11 +54,11 @@ class StreamService : Service() {
         if (intent?.action == "STOP") {
             isStreaming = false
             isRecording = false
+            notificarDesconexion() // AVISAR QUE SE DETUVO
             stopSelf()
             return START_NOT_STICKY
         }
 
-        // Limpieza inicial
         shoutcastClient?.disconnect()
         shoutcastClient = null
         serviceScope.cancel()
@@ -92,17 +92,57 @@ class StreamService : Service() {
             serviceScope.launch {
                 delay(timeoutMinutes * 60 * 1000L)
                 isStreaming = false
+                notificarDesconexion()
                 stopSelf()
             }
         }
 
-        // Iniciar la conexión por primera vez
         conectarAServidor()
-
         return START_STICKY
     }
 
-    // FUNCION DE CONEXION MEJORADA
+    // NOTIFICAR QUE SE DETUVO
+    private fun notificarDesconexion() {
+        val scope = CoroutineScope(Dispatchers.IO)
+        scope.launch {
+            try {
+                // 1. Actualizar Base de Datos (Pizarra)
+                val jsonDb = JSONObject().apply {
+                    put("titulo", "Fuera del aire")
+                    put("timestamp", System.currentTimeMillis())
+                }
+                val client = OkHttpClient()
+                client.newCall(Request.Builder().url(firebaseDbUrl).put(jsonDb.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
+
+                // 2. Enviar Notificación Push
+                val inputStream = resources.openRawResource(com.turadio.app.R.raw.service_account)
+                val jsonString = inputStream.bufferedReader().use { it.readText() }
+                val projectId = JSONObject(jsonString).getString("project_id")
+                val credentials = GoogleCredentials.fromStream(jsonString.byteInputStream()).createScoped(listOf("https://www.googleapis.com/auth/firebase.messaging"))
+                credentials.refreshIfExpired()
+                
+                val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
+                val jsonPush = """
+                    {
+                      "message": {
+                        "topic": "radio_en_vivo",
+                        "notification": {
+                          "title": "A Voz en Cuello",
+                          "body": "La transmisión ha finalizado."
+                        }
+                      }
+                    }
+                """.trimIndent()
+
+                client.newCall(
+                    Request.Builder().url(url).addHeader("Authorization", "Bearer ${credentials.accessToken.tokenValue}")
+                    .post(jsonPush.toRequestBody("application/json".toMediaType())).build()
+                ).execute().close()
+
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
+
     private fun conectarAServidor() {
         serviceScope.launch {
             try {
@@ -116,17 +156,13 @@ class StreamService : Service() {
                         isConnected = false
                         currentStatus = "Señal perdida. Reconectando..."
                         updateNotification(currentStatus, "Esperando red...")
-                        // Si hay un error, esperamos 5 segundos y reintentamos (solo si el usuario no ha detenido la app)
                         serviceScope.launch {
                             delay(5000)
-                            if (isStreaming) {
-                                conectarAServidor()
-                            }
+                            if (isStreaming) conectarAServidor()
                         }
                     }
                 )
 
-                // El cliente se conecta y empieza a transmitir
                 shoutcastClient?.connectAndStream {
                     isConnected = true
                     val timeIntent = Intent("TIME_UPDATE")
@@ -145,12 +181,9 @@ class StreamService : Service() {
                 }
             } catch (e: Exception) {
                 isConnected = false
-                // Si falla de inmediato (ej. no hay internet en absoluto), reintentamos
                 serviceScope.launch {
                     delay(5000)
-                    if (isStreaming) {
-                        conectarAServidor()
-                    }
+                    if (isStreaming) conectarAServidor()
                 }
             }
         }
@@ -164,11 +197,7 @@ class StreamService : Service() {
                     put("timestamp", System.currentTimeMillis())
                 }
                 val client = OkHttpClient()
-                val request = Request.Builder()
-                    .url(firebaseDbUrl)
-                    .put(json.toString().toRequestBody("application/json".toMediaType()))
-                    .build()
-                client.newCall(request).execute().use { response -> }
+                client.newCall(Request.Builder().url(firebaseDbUrl).put(json.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
             } catch (e: Exception) { e.printStackTrace() }
         }
     }
@@ -179,18 +208,10 @@ class StreamService : Service() {
         val audioFormat = AudioFormat.ENCODING_PCM_16BIT
         val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
 
-        val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            MediaRecorder.AudioSource.UNPROCESSED
-        } else {
-            MediaRecorder.AudioSource.DEFAULT
-        }
+        val source = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.DEFAULT
 
         audioRecord = AudioRecord(source, sampleRate, channelConfig, audioFormat, minBufSize * 2)
-
-        if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-            stopSelf()
-            return
-        }
+        if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) { stopSelf(); return }
 
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 2).apply {
             setInteger(MediaFormat.KEY_BIT_RATE, 64000)
@@ -233,8 +254,7 @@ class StreamService : Service() {
                     val inputIndex = mediaCodec?.dequeueInputBuffer(10000) ?: -1
                     if (inputIndex >= 0) {
                         val inputBuffer = mediaCodec?.getInputBuffer(inputIndex)
-                        inputBuffer?.clear()
-                        inputBuffer?.put(pcmBuffer, 0, read)
+                        inputBuffer?.clear(); inputBuffer?.put(pcmBuffer, 0, read)
                         mediaCodec?.queueInputBuffer(inputIndex, 0, read, System.nanoTime() / 1000, 0)
                     }
                 }
@@ -244,26 +264,19 @@ class StreamService : Service() {
                     val outputBuffer = mediaCodec?.getOutputBuffer(outputIndex)
                     if (outputBuffer != null && bufferInfo.size > 0) {
                         val aacData = ByteArray(bufferInfo.size)
-                        outputBuffer.position(bufferInfo.offset)
-                        outputBuffer.get(aacData)
+                        outputBuffer.position(bufferInfo.offset); outputBuffer.get(aacData)
                         val adtsData = addAdtsHeader(aacData, sampleRate, 2)
-                        
                         if (isStreaming && isConnected) shoutcastClient?.sendAudio(adtsData, adtsData.size)
-                        if (isRecording) {
-                            try { outputStream?.write(adtsData) } catch (e: Exception) {}
-                        }
+                        if (isRecording) { try { outputStream?.write(adtsData) } catch (e: Exception) {} }
                     }
                     mediaCodec?.releaseOutputBuffer(outputIndex, false)
                     outputIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, 0) ?: -1
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
         } finally {
-            try { audioRecord?.stop() } catch (e: Exception) {}
-            try { audioRecord?.release() } catch (e: Exception) {}
-            try { mediaCodec?.stop() } catch (e: Exception) {}
-            try { mediaCodec?.release() } catch (e: Exception) {}
+            try { audioRecord?.stop(); audioRecord?.release() } catch (e: Exception) {}
+            try { mediaCodec?.stop(); mediaCodec?.release() } catch (e: Exception) {}
             try { outputStream?.flush(); outputStream?.close() } catch (e: Exception) {}
             isRecording = false
             LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
@@ -293,10 +306,7 @@ class StreamService : Service() {
             } catch (e: Exception) {
             } finally { retriever.release() }
             
-            LocalBroadcastManager.getInstance(this).sendBroadcast(
-                Intent("TRACK_DURATION_UPDATE").putExtra("DURATION", trackDurationSeconds)
-            )
-            
+            LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("TRACK_DURATION_UPDATE").putExtra("DURATION", trackDurationSeconds))
             enviarAudioNativo(uriActual)
 
             index++
@@ -307,9 +317,7 @@ class StreamService : Service() {
     private fun enviarAudioNativo(uri: Uri) {
         val extractor = MediaExtractor()
         try {
-            contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                extractor.setDataSource(pfd.fileDescriptor)
-            }
+            contentResolver.openFileDescriptor(uri, "r")?.use { pfd -> extractor.setDataSource(pfd.fileDescriptor) }
 
             var audioTrackIndex = -1
             var isAac = false
@@ -331,7 +339,6 @@ class StreamService : Service() {
             }
 
             if (audioTrackIndex < 0) return
-
             extractor.selectTrack(audioTrackIndex)
             val buffer = ByteBuffer.allocate(65536)
             var bytesEnviadosTotales = 0L
@@ -343,8 +350,7 @@ class StreamService : Service() {
                 if (sampleSize < 0) break
 
                 var audioData = ByteArray(sampleSize)
-                buffer.position(0)
-                buffer.get(audioData)
+                buffer.position(0); buffer.get(audioData)
 
                 if (isAac) audioData = addAdtsHeader(audioData, sampleRate, channelCount)
 
@@ -355,9 +361,7 @@ class StreamService : Service() {
                 val currentTrackSecond = bytesEnviadosTotales / 8000
                 if (currentTrackSecond > lastBroadcastedSecond) {
                     lastBroadcastedSecond = currentTrackSecond
-                    LocalBroadcastManager.getInstance(this).sendBroadcast(
-                        Intent("TRACK_PROGRESS_UPDATE").putExtra("PROGRESS", currentTrackSecond)
-                    )
+                    LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("TRACK_PROGRESS_UPDATE").putExtra("PROGRESS", currentTrackSecond))
                 }
 
                 val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio

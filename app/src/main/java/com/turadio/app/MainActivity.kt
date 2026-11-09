@@ -96,10 +96,7 @@ fun AppRoot() {
                             isLocked = false
                         }
                     })
-                val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Desbloquear RadioMixer")
-                    .setNegativeButtonText("Usar PIN")
-                    .build()
+                val promptInfo = BiometricPrompt.PromptInfo.Builder().setTitle("Desbloquear RadioMixer").setNegativeButtonText("Usar PIN").build()
                 biometricPrompt.authenticate(promptInfo)
             }
         }
@@ -110,15 +107,12 @@ fun AppRoot() {
     } else if (isLocked && savedPin != null) {
         LockScreen(savedPin = savedPin!!) { isLocked = false }
     } else {
-        PantallaPrincipal(
-            savedPin = savedPin,
-            onPinSet = { newPin ->
-                scope.launch {
-                    context.dataStore.edit { it[stringPreferencesKey("APP_PIN")] = newPin }
-                    savedPin = newPin
-                }
+        PantallaPrincipal(savedPin = savedPin, onPinSet = { newPin ->
+            scope.launch {
+                context.dataStore.edit { it[stringPreferencesKey("APP_PIN")] = newPin }
+                savedPin = newPin
             }
-        )
+        })
     }
 }
 
@@ -127,39 +121,25 @@ fun LockScreen(savedPin: String, onUnlock: () -> Unit) {
     var pinInput by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
+    Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(Icons.Default.Lock, contentDescription = "Bloqueado", modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(modifier = Modifier.height(16.dp))
         Text("Ingrese su PIN", style = MaterialTheme.typography.titleLarge)
         Spacer(modifier = Modifier.height(16.dp))
         OutlinedTextField(
-            value = pinInput,
-            onValueChange = {
-                if (it.length <= 4) pinInput = it
-                error = false
-            },
+            value = pinInput, onValueChange = { if (it.length <= 4) pinInput = it; error = false },
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            isError = error,
-            label = { Text("PIN de 4 dígitos") },
-            modifier = Modifier.fillMaxWidth()
+            isError = error, label = { Text("PIN de 4 dígitos") }, modifier = Modifier.fillMaxWidth()
         )
         if (error) Text("PIN incorrecto", color = MaterialTheme.colorScheme.error)
         Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = { if (pinInput == savedPin) onUnlock() else error = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("Desbloquear")
-        }
+        Button(onClick = { if (pinInput == savedPin) onUnlock() else error = true }, modifier = Modifier.fillMaxWidth()) { Text("Desbloquear") }
     }
 }
 
 fun formatTime(seconds: Long): String {
-    val h = seconds / 3600
-    val m = (seconds % 3600) / 60
-    val s = seconds % 60
+    val h = seconds / 3600; val m = (seconds % 3600) / 60; val s = seconds % 60
     return if (h > 0) String.format("%02d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
 }
 
@@ -185,6 +165,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var conectado by remember { mutableStateOf(false) }
     var cancionActual by remember { mutableStateOf("Esperando...") }
 
+    // NUEVO: Estado para los oyentes
+    var oyentes by remember { mutableIntStateOf(0) }
+
     var startTime by remember { mutableLongStateOf(0L) }
     var timeoutMinutes by remember { mutableIntStateOf(0) }
     var tiempoAlAire by remember { mutableStateOf("00:00") }
@@ -192,41 +175,28 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var trackElapsed by remember { mutableLongStateOf(0L) }
     var trackDuration by remember { mutableLongStateOf(0L) }
 
-    // ESTADOS PARA LOS MODALES
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAutoStopDialog by remember { mutableStateOf(false) }
     var tempMinutes by remember { mutableStateOf("") }
-    
-    // ESTADO PARA PIN
     var pinSetup by remember { mutableStateOf("") }
     var showPinSetup by remember { mutableStateOf(savedPin == null) }
 
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
+    val permissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { isGranted ->
         if (isGranted) {
             cancionActual = nombrePrograma
-            trackElapsed = 0L
-            trackDuration = 0L
+            trackElapsed = 0L; trackDuration = 0L
             val intent = Intent(context, StreamService::class.java).apply {
-                putExtra("IP", ip)
-                putExtra("PORT", puerto.toIntOrNull() ?: 8017)
-                putExtra("PASS", password)
+                putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
-                putExtra("LINE_IN_MODE", true)
-                putExtra("RECORD_STREAM", grabarMezcladora)
+                putExtra("LINE_IN_MODE", true); putExtra("RECORD_STREAM", grabarMezcladora)
                 putExtra("PROGRAM_NAME", nombrePrograma)
             }
             context.startForegroundService(intent)
             conectado = true
             mensajeEstado = "Transmitiendo Entrada de Línea..."
-        } else {
-            mensajeEstado = "Permiso de micrófono denegado"
-        }
+        } else { mensajeEstado = "Permiso de micrófono denegado" }
     }
 
     LaunchedEffect(Unit) {
@@ -243,11 +213,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             todosLosArchivos = archivos?.map { Pair(it.uri, it.name ?: "Canción") } ?: emptyList()
             
             val savedUris = prefs[stringSetPreferencesKey("PLAYLIST_URIS")] ?: emptySet()
-            if (savedUris.isNotEmpty()) {
-                listaReproduccion = todosLosArchivos.filter { savedUris.contains(it.first.toString()) }
-            } else {
-                listaReproduccion = todosLosArchivos
-            }
+            if (savedUris.isNotEmpty()) listaReproduccion = todosLosArchivos.filter { savedUris.contains(it.first.toString()) }
+            else listaReproduccion = todosLosArchivos
             mensajeEstado = "Carpeta cargada: ${todosLosArchivos.size} canciones"
         }
         
@@ -258,23 +225,41 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
+    // RELOJES
     LaunchedEffect(conectado, startTime, timeoutMinutes) {
         if (conectado && startTime > 0) {
             while (true) {
-                val now = System.currentTimeMillis()
-                val elapsedSeconds = (now - startTime) / 1000
+                val elapsedSeconds = (System.currentTimeMillis() - startTime) / 1000
                 tiempoAlAire = formatTime(elapsedSeconds)
-
                 if (timeoutMinutes > 0) {
-                    val totalSeconds = timeoutMinutes * 60L
-                    val remainingSeconds = totalSeconds - elapsedSeconds
-                    if (remainingSeconds > 0) tiempoRestante = formatTime(remainingSeconds)
-                    else { tiempoRestante = "00:00"; conectado = false }
-                } else {
-                    tiempoRestante = "Ilimitado"
-                }
+                    val remaining = (timeoutMinutes * 60L) - elapsedSeconds
+                    if (remaining > 0) tiempoRestante = formatTime(remaining) else { tiempoRestante = "00:00"; conectado = false }
+                } else tiempoRestante = "Ilimitado"
                 delay(1000L)
             }
+        }
+    }
+
+    // CONTADOR DE OYENTES
+    LaunchedEffect(conectado) {
+        if (conectado) {
+            while (true) {
+                try {
+                    val client = OkHttpClient()
+                    val request = Request.Builder().url("http://radio.conectarservidor.com:8016/stats?sid=1&json=1").build()
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val json = JSONObject(response.body?.string() ?: "{}")
+                            if (json.has("currentlisteners")) {
+                                oyentes = json.getInt("currentlisteners")
+                            }
+                        }
+                    }
+                } catch (e: Exception) { /* Ignorar si falla la red */ }
+                delay(20000L) // Cada 20 segundos
+            }
+        } else {
+            oyentes = 0
         }
     }
 
@@ -282,36 +267,23 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    "SONG_UPDATE" -> {
-                        cancionActual = intent.getStringExtra("SONG_NAME") ?: "Desconocida"
-                        trackElapsed = 0L
-                        trackDuration = 0L
-                    }
-                    "TIME_UPDATE" -> {
-                        startTime = intent.getLongExtra("START_TIME", 0L)
-                        timeoutMinutes = intent.getIntExtra("TIMEOUT", 0)
-                    }
+                    "SONG_UPDATE" -> { cancionActual = intent.getStringExtra("SONG_NAME") ?: "Desconocida"; trackElapsed = 0L; trackDuration = 0L }
+                    "TIME_UPDATE" -> { startTime = intent.getLongExtra("START_TIME", 0L); timeoutMinutes = intent.getIntExtra("TIMEOUT", 0) }
                     "TRACK_DURATION_UPDATE" -> trackDuration = intent.getLongExtra("DURATION", 0L)
                     "TRACK_PROGRESS_UPDATE" -> trackElapsed = intent.getLongExtra("PROGRESS", 0L)
                     "RECORDING_UPDATE" -> isRecordingActive = intent.getBooleanExtra("IS_RECORDING", false)
                 }
             }
         }
-        val filter = IntentFilter().apply {
-            addAction("SONG_UPDATE"); addAction("TIME_UPDATE"); addAction("TRACK_DURATION_UPDATE"); addAction("TRACK_PROGRESS_UPDATE"); addAction("RECORDING_UPDATE")
-        }
+        val filter = IntentFilter().apply { addAction("SONG_UPDATE"); addAction("TIME_UPDATE"); addAction("TRACK_DURATION_UPDATE"); addAction("TRACK_PROGRESS_UPDATE"); addAction("RECORDING_UPDATE") }
         LocalBroadcastManager.getInstance(context).registerReceiver(receiver, filter)
         onDispose { LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver) }
     }
 
-    val selectorCarpeta = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
+    val selectorCarpeta = rememberLauncherForActivityResult(contract = ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         uri?.let {
             context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            scope.launch {
-                context.dataStore.edit { settings -> settings[stringPreferencesKey("FOLDER_URI")] = it.toString() }
-            }
+            scope.launch { context.dataStore.edit { settings -> settings[stringPreferencesKey("FOLDER_URI")] = it.toString() } }
             val root = DocumentFile.fromTreeUri(context, it)
             val archivos = root?.listFiles()?.filter { file -> file.type?.startsWith("audio/") == true }
             todosLosArchivos = archivos?.map { file -> Pair(file.uri, file.name ?: "Canción") } ?: emptyList()
@@ -321,11 +293,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     }
 
     fun toggleSeleccion(cancion: Pair<Uri, String>) {
-        if (listaReproduccion.contains(cancion)) listaReproduccion -= cancion
-        else listaReproduccion += cancion
-        scope.launch {
-            context.dataStore.edit { settings -> settings[stringSetPreferencesKey("PLAYLIST_URIS")] = listaReproduccion.map { it.first.toString() }.toSet() }
-        }
+        if (listaReproduccion.contains(cancion)) listaReproduccion -= cancion else listaReproduccion += cancion
+        scope.launch { context.dataStore.edit { settings -> settings[stringSetPreferencesKey("PLAYLIST_URIS")] = listaReproduccion.map { it.first.toString() }.toSet() } }
     }
 
     fun moverArriba(index: Int) {
@@ -352,42 +321,22 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 val projectId = JSONObject(jsonString).getString("project_id")
                 val credentials = GoogleCredentials.fromStream(jsonString.byteInputStream()).createScoped(listOf("https://www.googleapis.com/auth/firebase.messaging"))
                 credentials.refreshIfExpired()
-                val token = credentials.accessToken.tokenValue
                 val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
-                val jsonBody = """
-                    {
-                      "message": {
-                        "topic": "radio_en_vivo",
-                        "notification": {
-                          "title": "¡A Voz en Cuello está en vivo!",
-                          "body": "La transmisión ha comenzado. ¡Entra a escuchar!"
-                        }
-                      }
-                    }
-                """.trimIndent()
+                val jsonBody = """{"message": {"topic": "radio_en_vivo","notification": {"title": "¡A Voz en Cuello está en vivo!","body": "La transmisión ha comenzado. ¡Entra a escuchar!"}}}"""
                 val client = OkHttpClient()
-                val request = Request.Builder().url(url).addHeader("Authorization", "Bearer $token").post(jsonBody.toRequestBody("application/json".toMediaType())).build()
-                client.newCall(request).execute().use { response -> }
+                val request = Request.Builder().url(url).addHeader("Authorization", "Bearer ${credentials.accessToken.tokenValue}").post(jsonBody.toRequestBody("application/json".toMediaType())).build()
+                client.newCall(request).execute().use { }
             } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
-    // MODALES
     if (showPinSetup) {
-        AlertDialog(
-            onDismissRequest = { },
-            title = { Text("Configurar Seguridad") },
+        AlertDialog(onDismissRequest = { }, title = { Text("Configurar Seguridad") },
             text = {
                 Column {
                     Text("Cree un PIN de 4 dígitos para proteger la app.")
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = pinSetup,
-                        onValueChange = { if (it.length <= 4) pinSetup = it },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        label = { Text("Nuevo PIN") }
-                    )
+                    OutlinedTextField(value = pinSetup, onValueChange = { if (it.length <= 4) pinSetup = it }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), label = { Text("Nuevo PIN") })
                 }
             },
             confirmButton = { TextButton(onClick = { if (pinSetup.length == 4) { onPinSet(pinSetup); showPinSetup = false } }) { Text("Guardar") } }
@@ -395,9 +344,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     }
 
     if (showSettingsDialog) {
-        AlertDialog(
-            onDismissRequest = { showSettingsDialog = false },
-            title = { Text("Ajustes de Red") },
+        AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text("Ajustes de Red") },
             text = {
                 Column {
                     OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
@@ -412,71 +359,35 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     }
 
     if (showAutoStopDialog) {
-        AlertDialog(
-            onDismissRequest = { showAutoStopDialog = false },
-            title = { Text("Temporizador Auto-Stop") },
+        AlertDialog(onDismissRequest = { showAutoStopDialog = false }, title = { Text("Temporizador Auto-Stop") },
             text = {
                 Column {
                     Text("¿En cuántos minutos quieres que se detenga la transmisión?")
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = tempMinutes,
-                        onValueChange = { if (it.all { char -> char.isDigit() }) tempMinutes = it },
-                        label = { Text("Minutos (0 = Desactivado)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = tempMinutes, onValueChange = { if (it.all { char -> char.isDigit() }) tempMinutes = it }, label = { Text("Minutos (0 = Desactivado)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    minutosAutoStop = tempMinutes
-                    showAutoStopDialog = false
-                }) { Text("Aceptar") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAutoStopDialog = false }) { Text("Cancelar") }
-            }
+            confirmButton = { TextButton(onClick = { minutosAutoStop = tempMinutes; showAutoStopDialog = false }) { Text("Aceptar") } },
+            dismissButton = { TextButton(onClick = { showAutoStopDialog = false }) { Text("Cancelar") } }
         )
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // BARRA SUPERIOR CON ICONOS
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text("RadioMixer", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            IconButton(onClick = { 
-                tempMinutes = minutosAutoStop
-                showAutoStopDialog = true 
-            }) {
+            IconButton(onClick = { tempMinutes = minutosAutoStop; showAutoStopDialog = true }) {
                 Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
             }
-            IconButton(onClick = { showSettingsDialog = true }) {
-                Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary)
-            }
+            IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary) }
         }
 
         if (!conectado) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { modoMezcladora = false },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Icon(Icons.Default.MusicNote, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Auto-DJ")
+                Button(onClick = { modoMezcladora = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)) {
+                    Icon(Icons.Default.MusicNote, contentDescription = null); Spacer(modifier = Modifier.width(4.dp)); Text("Auto-DJ")
                 }
-                Button(
-                    onClick = { modoMezcladora = true },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Icon(Icons.Default.SettingsInputComponent, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Mezcladora")
+                Button(onClick = { modoMezcladora = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)) {
+                    Icon(Icons.Default.SettingsInputComponent, contentDescription = null); Spacer(modifier = Modifier.width(4.dp)); Text("Mezcladora")
                 }
             }
         }
@@ -490,11 +401,16 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         Icon(Icons.Default.PlayArrow, contentDescription = "En vivo", tint = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+                        
+                        // INDICADOR DE OYENTES AQUÍ
+                        Spacer(modifier = Modifier.weight(1f))
+                        Icon(Icons.Default.People, contentDescription = "Oyentes", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("$oyentes", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+
                         if (isRecordingActive) {
-                            Spacer(modifier = Modifier.weight(1f))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Icon(Icons.Default.FiberManualRecord, contentDescription = "Grabando", tint = Color.Red, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("GRABANDO", color = Color.Red, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -509,9 +425,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                 Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
                                 Text(formatTime(trackDuration), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
                             }
-                        } else {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        }
+                        } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
 
                     Divider(modifier = Modifier.padding(vertical = 8.dp))
@@ -533,9 +447,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         if (!modoMezcladora) {
             if (!conectado) {
                 Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Folder, contentDescription = "Carpeta")
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Seleccionar Carpeta de Música")
+                    Icon(Icons.Default.Folder, contentDescription = "Carpeta"); Spacer(modifier = Modifier.width(8.dp)); Text("Seleccionar Carpeta de Música")
                 }
 
                 if (todosLosArchivos.isNotEmpty()) {
@@ -562,12 +474,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                             Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
                                 Row {
-                                    IconButton(onClick = { moverArriba(index) }, enabled = index > 0 && !conectado) {
-                                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray)
-                                    }
-                                    IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1 && !conectado) {
-                                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray)
-                                    }
+                                    IconButton(onClick = { moverArriba(index) }, enabled = index > 0 && !conectado) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray) }
+                                    IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1 && !conectado) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray) }
                                 }
                             }
                         }
@@ -596,60 +504,43 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        Button(
-            onClick = { 
-                if (!conectado) {
-                    enviarNotificacionFirebase()
-
-                    if (modoMezcladora) {
-                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            cancionActual = nombrePrograma
-                            trackElapsed = 0L; trackDuration = 0L
-                            val intent = Intent(context, StreamService::class.java).apply {
-                                putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
-                                putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
-                                putExtra("LINE_IN_MODE", true); putExtra("RECORD_STREAM", grabarMezcladora)
-                                putExtra("PROGRAM_NAME", nombrePrograma)
-                            }
-                            context.startForegroundService(intent)
-                            conectado = true
-                            mensajeEstado = "Transmitiendo Entrada de Línea..."
-                        } else {
-                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        Button(onClick = { 
+            if (!conectado) {
+                enviarNotificacionFirebase()
+                if (modoMezcladora) {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        cancionActual = nombrePrograma; trackElapsed = 0L; trackDuration = 0L
+                        val intent = Intent(context, StreamService::class.java).apply {
+                            putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
+                            putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
+                            putExtra("LINE_IN_MODE", true); putExtra("RECORD_STREAM", grabarMezcladora)
+                            putExtra("PROGRAM_NAME", nombrePrograma)
                         }
-                    } else {
-                        if (listaReproduccion.isEmpty()) {
-                            mensajeEstado = "Selecciona al menos una canción"
-                            return@Button
-                        }
-                        scope.launch {
-                            context.dataStore.edit { settings ->
-                                settings[stringPreferencesKey("IP")] = ip
-                                settings[stringPreferencesKey("PORT")] = puerto
-                                settings[stringPreferencesKey("PASS")] = password
-                            }
-                            val intent = Intent(context, StreamService::class.java).apply {
-                                putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
-                                putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
-                                putExtra("LINE_IN_MODE", false)
-                                putStringArrayListExtra("URIS", ArrayList(listaReproduccion.map { it.first.toString() }))
-                            }
-                            context.startForegroundService(intent)
-                            conectado = true
-                            mensajeEstado = "Transmitiendo Auto-DJ..."
-                        }
-                    }
+                        context.startForegroundService(intent); conectado = true; mensajeEstado = "Transmitiendo Entrada de Línea..."
+                    } else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 } else {
-                    isRecordingActive = false
-                    val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
-                    context.startService(intent)
-                    conectado = false
-                    mensajeEstado = "Transmisión detenida."
+                    if (listaReproduccion.isEmpty()) { mensajeEstado = "Selecciona al menos una canción"; return@Button }
+                    scope.launch {
+                        context.dataStore.edit { settings ->
+                            settings[stringPreferencesKey("IP")] = ip
+                            settings[stringPreferencesKey("PORT")] = puerto
+                            settings[stringPreferencesKey("PASS")] = password
+                        }
+                        val intent = Intent(context, StreamService::class.java).apply {
+                            putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
+                            putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
+                            putExtra("LINE_IN_MODE", false)
+                            putStringArrayListExtra("URIS", ArrayList(listaReproduccion.map { it.first.toString() }))
+                        }
+                        context.startForegroundService(intent); conectado = true; mensajeEstado = "Transmitiendo Auto-DJ..."
+                    }
                 }
-            },
-            modifier = Modifier.fillMaxWidth().height(60.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = if (conectado) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-        ) {
+            } else {
+                isRecordingActive = false
+                val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
+                context.startService(intent); conectado = false; mensajeEstado = "Transmisión detenida."
+            }
+        }, modifier = Modifier.fillMaxWidth().height(60.dp), colors = ButtonDefaults.buttonColors(containerColor = if (conectado) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)) {
             Icon(if (conectado) Icons.Default.Close else Icons.Default.PlayArrow, contentDescription = "Play/Stop")
             Spacer(modifier = Modifier.width(8.dp))
             Text(if (conectado) "DETENER TRANSMISIÓN" else "INICIAR TRANSMISIÓN")
