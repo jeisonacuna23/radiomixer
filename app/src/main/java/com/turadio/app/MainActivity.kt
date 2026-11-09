@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -174,7 +175,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var puerto by remember { mutableStateOf("8017") }
     var password by remember { mutableStateOf("") }
     var minutosAutoStop by remember { mutableStateOf("") }
-    var nombrePrograma by remember { mutableStateOf("Programa en Vivo") } // NUEVO CAMPO
+    var nombrePrograma by remember { mutableStateOf("Programa en Vivo") }
     
     var modoMezcladora by remember { mutableStateOf(false) }
     var grabarMezcladora by remember { mutableStateOf(false) }
@@ -198,11 +199,16 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var pinSetup by remember { mutableStateOf("") }
     var showPinSetup by remember { mutableStateOf(savedPin == null) }
 
+    // NUEVO: Permiso para notificaciones en Android 13+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* No importa si lo acepta o no, el servicio arrancará igual */ }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            cancionActual = nombrePrograma // Actualizamos la UI local
+            cancionActual = nombrePrograma
             trackElapsed = 0L
             trackDuration = 0L
             val intent = Intent(context, StreamService::class.java).apply {
@@ -212,7 +218,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
                 putExtra("LINE_IN_MODE", true)
                 putExtra("RECORD_STREAM", grabarMezcladora)
-                putExtra("PROGRAM_NAME", nombrePrograma) // Enviamos el nombre del programa
+                putExtra("PROGRAM_NAME", nombrePrograma)
             }
             context.startForegroundService(intent)
             conectado = true
@@ -242,6 +248,13 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 listaReproduccion = todosLosArchivos
             }
             mensajeEstado = "Carpeta cargada: ${todosLosArchivos.size} canciones"
+        }
+        
+        // Pedir permiso de notificaciones al abrir la app
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 
@@ -637,7 +650,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     
                     Spacer(modifier = Modifier.height(16.dp))
                     
-                    // NUEVO CAMPO DE TEXTO PARA EL NOMBRE DEL PROGRAMA
                     OutlinedTextField(
                         value = nombrePrograma,
                         onValueChange = { nombrePrograma = it },
