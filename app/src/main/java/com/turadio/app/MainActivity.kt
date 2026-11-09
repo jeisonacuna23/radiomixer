@@ -166,9 +166,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var cancionActual by remember { mutableStateOf("Esperando...") }
     var oyentes by remember { mutableIntStateOf(0) }
 
-    // ESTADOS EN VIVO
     var isLiveMicUi by remember { mutableStateOf(false) }
     var liveProgramName by remember { mutableStateOf("Programa en Vivo") }
+    var pendingMicActivation by remember { mutableStateOf(false) }
 
     var startTime by remember { mutableLongStateOf(0L) }
     var timeoutMinutes by remember { mutableIntStateOf(0) }
@@ -185,11 +185,28 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { }
 
+    val micPermissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted && pendingMicActivation) {
+            val intent = Intent(context, StreamService::class.java).apply {
+                action = "TOGGLE_LIVE_MIC"
+                putExtra("IS_LIVE_MIC", true)
+                putExtra("PROGRAM_NAME", liveProgramName)
+            }
+            context.startService(intent)
+            isLiveMicUi = true
+            pendingMicActivation = false
+        } else {
+            isLiveMicUi = false
+            pendingMicActivation = false
+            mensajeEstado = "Permiso de micrófono denegado"
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { isGranted ->
         if (isGranted) {
             cancionActual = nombrePrograma
             trackElapsed = 0L; trackDuration = 0L
-            isLiveMicUi = true // Arrancó en mezcladora
+            isLiveMicUi = true
             liveProgramName = nombrePrograma
             val intent = Intent(context, StreamService::class.java).apply {
                 putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
@@ -328,7 +345,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         }
     }
 
-    // MODALES
     if (showPinSetup) {
         AlertDialog(onDismissRequest = { }, title = { Text("Configurar Seguridad") },
             text = {
@@ -413,14 +429,11 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     }
                     
                     Spacer(modifier = Modifier.height(8.dp))
-                    // SWITCH EN VIVO AQUI
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                         Switch(
                             checked = isLiveMicUi, 
                             onCheckedChange = { isChecked ->
-                                isLiveMicUi = isChecked
                                 if (isChecked) {
-                                    // Pedir permiso de micrófono si no lo tiene
                                     if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                                         val intent = Intent(context, StreamService::class.java).apply {
                                             action = "TOGGLE_LIVE_MIC"
@@ -428,9 +441,10 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                             putExtra("PROGRAM_NAME", liveProgramName)
                                         }
                                         context.startService(intent)
+                                        isLiveMicUi = true
                                     } else {
-                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                        isLiveMicUi = false // Revertir si no da permiso
+                                        pendingMicActivation = true
+                                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                     }
                                 } else {
                                     val intent = Intent(context, StreamService::class.java).apply {
@@ -438,6 +452,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                         putExtra("IS_LIVE_MIC", false)
                                     }
                                     context.startService(intent)
+                                    isLiveMicUi = false
                                 }
                             }
                         )
@@ -445,13 +460,11 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         Text(if (isLiveMicUi) "Modo Mezcladora (En vivo)" else "Modo Auto-DJ", style = MaterialTheme.typography.bodyMedium)
                     }
 
-                    // CAMPO DE TEXTO PARA EL PROGRAMA (solo si el switch está activo)
                     if (isLiveMicUi) {
                         OutlinedTextField(
                             value = liveProgramName,
                             onValueChange = { 
                                 liveProgramName = it
-                                // Enviar el texto actualizado al servicio
                                 val intent = Intent(context, StreamService::class.java).apply {
                                     action = "TOGGLE_LIVE_MIC"
                                     putExtra("IS_LIVE_MIC", true)

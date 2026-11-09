@@ -34,7 +34,7 @@ class StreamService : Service() {
     @Volatile private var isRecording = false
     @Volatile private var isStreaming = false
     @Volatile private var isConnected = false
-    @Volatile private var isLiveMicActive = false // NUEVO: Switch en vivo
+    @Volatile private var isLiveMicActive = false
 
     private var outputStream: OutputStream? = null
     private var audioRecord: AudioRecord? = null
@@ -61,18 +61,35 @@ class StreamService : Service() {
             return START_NOT_STICKY
         }
 
-        // CAMBIO EN VIVO
+        // CAMBIO EN VIVO CORREGIDO
         if (intent?.action == "TOGGLE_LIVE_MIC") {
-            isLiveMicActive = intent.getBooleanExtra("IS_LIVE_MIC", false)
+            val nuevoEstado = intent.getBooleanExtra("IS_LIVE_MIC", false)
             configProgramName = intent.getStringExtra("PROGRAM_NAME") ?: "Programa en Vivo"
             
-            if (isLiveMicActive) {
+            if (nuevoEstado && !isLiveMicActive) {
+                // ACTIVAR MICRÓFONO
+                isLiveMicActive = true
                 currentSong = configProgramName
                 LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("SONG_UPDATE").putExtra("SONG_NAME", currentSong))
                 actualizarNowPlaying(configProgramName)
+                
+                // ACTUALIZAR TIPO DE FOREGROUND SERVICE (Obligatorio en Android 14)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val notif = buildNotification("En Vivo (Micrófono)", currentSong)
+                    startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                }
+                
                 iniciarLineIn()
-            } else {
+            } else if (!nuevoEstado && isLiveMicActive) {
+                // DESACTIVAR MICRÓFONO
+                isLiveMicActive = false
                 stopMicrophone()
+                
+                // VOLVER A FOREGROUND SERVICE DE MÚSICA
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val notif = buildNotification("En Vivo (Música)", currentSong)
+                    startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                }
             }
             return START_STICKY
         }
@@ -94,7 +111,7 @@ class StreamService : Service() {
         configUris = uriList.map { Uri.parse(it) }
         startTime = System.currentTimeMillis()
         isStreaming = true
-        isLiveMicActive = configModeMezcladora // Si arrancó en mezcladora, el switch empieza activo
+        isLiveMicActive = configModeMezcladora
 
         createNotificationChannel()
         updateNotification("Conectando...", "")
@@ -186,7 +203,7 @@ class StreamService : Service() {
     }
 
     private fun iniciarLineIn() {
-        stopMicrophone() // Prevenir doble hilo
+        stopMicrophone()
         micJob = serviceScope.launch {
             val sampleRate = 44100
             val channelConfig = AudioFormat.CHANNEL_IN_STEREO
@@ -262,7 +279,7 @@ class StreamService : Service() {
             } finally {
                 try { audioRecord?.stop(); audioRecord?.release() } catch (e: Exception) {}
                 try { mediaCodec?.stop(); mediaCodec?.release() } catch (e: Exception) {}
-                if (!isLiveMicActive) { // Solo cerrar el archivo si de verdad salimos del modo micro
+                if (!isLiveMicActive) {
                     try { outputStream?.flush(); outputStream?.close(); outputStream = null } catch (e: Exception) {}
                     isRecording = false
                     LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
@@ -280,7 +297,6 @@ class StreamService : Service() {
         var index = 0
         while (isStreaming && isConnected && uris.isNotEmpty()) {
             if (isLiveMicActive) {
-                // Si el switch se activa, la música se pausa y salta a la siguiente
                 index++
                 if (index >= uris.size) index = 0
                 Thread.sleep(500)
@@ -346,7 +362,7 @@ class StreamService : Service() {
             val tiempoInicio = System.currentTimeMillis()
             var lastBroadcastedSecond = -1L
 
-            while (isStreaming && isConnected && !isLiveMicActive) { // Si el switch se activa, sale del bucle
+            while (isStreaming && isConnected && !isLiveMicActive) {
                 val sampleSize = extractor.readSampleData(buffer, 0)
                 if (sampleSize < 0) break
 
