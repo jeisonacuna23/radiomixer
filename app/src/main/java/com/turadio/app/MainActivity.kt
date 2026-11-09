@@ -59,12 +59,9 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    AppRoot()
-                }
+                Surface(modifier = Modifier.fillMaxSize()) { AppRoot() }
             }
         }
     }
@@ -195,14 +192,18 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     var trackElapsed by remember { mutableLongStateOf(0L) }
     var trackDuration by remember { mutableLongStateOf(0L) }
 
-    var showSettings by remember { mutableStateOf(false) }
+    // ESTADOS PARA LOS MODALES
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var showAutoStopDialog by remember { mutableStateOf(false) }
+    var tempMinutes by remember { mutableStateOf("") }
+    
+    // ESTADO PARA PIN
     var pinSetup by remember { mutableStateOf("") }
     var showPinSetup by remember { mutableStateOf(savedPin == null) }
 
-    // NUEVO: Permiso para notificaciones en Android 13+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
-    ) { /* No importa si lo acepta o no, el servicio arrancará igual */ }
+    ) { }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -250,7 +251,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             mensajeEstado = "Carpeta cargada: ${todosLosArchivos.size} canciones"
         }
         
-        // Pedir permiso de notificaciones al abrir la app
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -268,12 +268,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 if (timeoutMinutes > 0) {
                     val totalSeconds = timeoutMinutes * 60L
                     val remainingSeconds = totalSeconds - elapsedSeconds
-                    if (remainingSeconds > 0) {
-                        tiempoRestante = formatTime(remainingSeconds)
-                    } else {
-                        tiempoRestante = "00:00"
-                        conectado = false 
-                    }
+                    if (remainingSeconds > 0) tiempoRestante = formatTime(remainingSeconds)
+                    else { tiempoRestante = "00:00"; conectado = false }
                 } else {
                     tiempoRestante = "Ilimitado"
                 }
@@ -295,24 +291,14 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         startTime = intent.getLongExtra("START_TIME", 0L)
                         timeoutMinutes = intent.getIntExtra("TIMEOUT", 0)
                     }
-                    "TRACK_DURATION_UPDATE" -> {
-                        trackDuration = intent.getLongExtra("DURATION", 0L)
-                    }
-                    "TRACK_PROGRESS_UPDATE" -> {
-                        trackElapsed = intent.getLongExtra("PROGRESS", 0L)
-                    }
-                    "RECORDING_UPDATE" -> {
-                        isRecordingActive = intent.getBooleanExtra("IS_RECORDING", false)
-                    }
+                    "TRACK_DURATION_UPDATE" -> trackDuration = intent.getLongExtra("DURATION", 0L)
+                    "TRACK_PROGRESS_UPDATE" -> trackElapsed = intent.getLongExtra("PROGRESS", 0L)
+                    "RECORDING_UPDATE" -> isRecordingActive = intent.getBooleanExtra("IS_RECORDING", false)
                 }
             }
         }
         val filter = IntentFilter().apply {
-            addAction("SONG_UPDATE")
-            addAction("TIME_UPDATE")
-            addAction("TRACK_DURATION_UPDATE")
-            addAction("TRACK_PROGRESS_UPDATE")
-            addAction("RECORDING_UPDATE")
+            addAction("SONG_UPDATE"); addAction("TIME_UPDATE"); addAction("TRACK_DURATION_UPDATE"); addAction("TRACK_PROGRESS_UPDATE"); addAction("RECORDING_UPDATE")
         }
         LocalBroadcastManager.getInstance(context).registerReceiver(receiver, filter)
         onDispose { LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver) }
@@ -335,23 +321,17 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     }
 
     fun toggleSeleccion(cancion: Pair<Uri, String>) {
-        if (listaReproduccion.contains(cancion)) {
-            listaReproduccion = listaReproduccion - cancion
-        } else {
-            listaReproduccion = listaReproduccion + cancion
-        }
+        if (listaReproduccion.contains(cancion)) listaReproduccion -= cancion
+        else listaReproduccion += cancion
         scope.launch {
-            context.dataStore.edit { settings ->
-                settings[stringSetPreferencesKey("PLAYLIST_URIS")] = listaReproduccion.map { it.first.toString() }.toSet()
-            }
+            context.dataStore.edit { settings -> settings[stringSetPreferencesKey("PLAYLIST_URIS")] = listaReproduccion.map { it.first.toString() }.toSet() }
         }
     }
 
     fun moverArriba(index: Int) {
         if (index > 0) {
             val nuevaLista = listaReproduccion.toMutableList()
-            val item = nuevaLista.removeAt(index)
-            nuevaLista.add(index - 1, item)
+            nuevaLista.add(index - 1, nuevaLista.removeAt(index))
             listaReproduccion = nuevaLista
         }
     }
@@ -359,8 +339,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
     fun moverAbajo(index: Int) {
         if (index < listaReproduccion.size - 1) {
             val nuevaLista = listaReproduccion.toMutableList()
-            val item = nuevaLista.removeAt(index)
-            nuevaLista.add(index + 1, item)
+            nuevaLista.add(index + 1, nuevaLista.removeAt(index))
             listaReproduccion = nuevaLista
         }
     }
@@ -371,12 +350,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 val inputStream = context.resources.openRawResource(com.turadio.app.R.raw.service_account)
                 val jsonString = inputStream.bufferedReader().use { it.readText() }
                 val projectId = JSONObject(jsonString).getString("project_id")
-
-                val credentials = GoogleCredentials.fromStream(jsonString.byteInputStream())
-                    .createScoped(listOf("https://www.googleapis.com/auth/firebase.messaging"))
+                val credentials = GoogleCredentials.fromStream(jsonString.byteInputStream()).createScoped(listOf("https://www.googleapis.com/auth/firebase.messaging"))
                 credentials.refreshIfExpired()
                 val token = credentials.accessToken.tokenValue
-
                 val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
                 val jsonBody = """
                     {
@@ -389,25 +365,14 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                       }
                     }
                 """.trimIndent()
-
                 val client = OkHttpClient()
-                val request = Request.Builder()
-                    .url(url)
-                    .addHeader("Authorization", "Bearer $token")
-                    .post(jsonBody.toRequestBody("application/json".toMediaType()))
-                    .build()
-
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        println("Error Firebase: ${response.body?.string()}")
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+                val request = Request.Builder().url(url).addHeader("Authorization", "Bearer $token").post(jsonBody.toRequestBody("application/json".toMediaType())).build()
+                client.newCall(request).execute().use { response -> }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
+    // MODALES
     if (showPinSetup) {
         AlertDialog(
             onDismissRequest = { },
@@ -425,8 +390,52 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     )
                 }
             },
+            confirmButton = { TextButton(onClick = { if (pinSetup.length == 4) { onPinSet(pinSetup); showPinSetup = false } }) { Text("Guardar") } }
+        )
+    }
+
+    if (showSettingsDialog) {
+        AlertDialog(
+            onDismissRequest = { showSettingsDialog = false },
+            title = { Text("Ajustes de Red") },
+            text = {
+                Column {
+                    OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSettingsDialog = false }) { Text("Cerrar") } }
+        )
+    }
+
+    if (showAutoStopDialog) {
+        AlertDialog(
+            onDismissRequest = { showAutoStopDialog = false },
+            title = { Text("Temporizador Auto-Stop") },
+            text = {
+                Column {
+                    Text("¿En cuántos minutos quieres que se detenga la transmisión?")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = tempMinutes,
+                        onValueChange = { if (it.all { char -> char.isDigit() }) tempMinutes = it },
+                        label = { Text("Minutos (0 = Desactivado)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
             confirmButton = {
-                TextButton(onClick = { if (pinSetup.length == 4) { onPinSet(pinSetup); showPinSetup = false } }) { Text("Guardar") }
+                TextButton(onClick = {
+                    minutosAutoStop = tempMinutes
+                    showAutoStopDialog = false
+                }) { Text("Aceptar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAutoStopDialog = false }) { Text("Cancelar") }
             }
         )
     }
@@ -435,16 +444,26 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("RadioMixer", style = MaterialTheme.typography.titleLarge)
+        // BARRA SUPERIOR CON ICONOS
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("RadioMixer", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            IconButton(onClick = { 
+                tempMinutes = minutosAutoStop
+                showAutoStopDialog = true 
+            }) {
+                Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+            }
+            IconButton(onClick = { showSettingsDialog = true }) {
+                Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary)
+            }
+        }
 
         if (!conectado) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { modoMezcladora = false },
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Icon(Icons.Default.MusicNote, contentDescription = null)
                     Spacer(modifier = Modifier.width(4.dp))
@@ -453,54 +472,12 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 Button(
                     onClick = { modoMezcladora = true },
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Icon(Icons.Default.SettingsInputComponent, contentDescription = null)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Mezcladora")
                 }
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Ajustes de Red", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    IconButton(onClick = { showSettings = !showSettings }) {
-                        Icon(if (showSettings) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = "Toggle")
-                    }
-                }
-                
-                if (showSettings) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(value = ip, onValueChange = { ip = it }, label = { Text("Servidor") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(value = puerto, onValueChange = { puerto = it }, label = { Text("Puerto") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
-                }
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Timer, contentDescription = "Temporizador", tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Auto-Stop (Minutos)", style = MaterialTheme.typography.titleMedium)
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = minutosAutoStop, 
-                    onValueChange = { if (it.all { char -> char.isDigit() }) minutosAutoStop = it }, 
-                    label = { Text("0 = Desactivado") }, 
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
             }
         }
 
@@ -513,7 +490,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         Icon(Icons.Default.PlayArrow, contentDescription = "En vivo", tint = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
-                        
                         if (isRecordingActive) {
                             Spacer(modifier = Modifier.weight(1f))
                             Icon(Icons.Default.FiberManualRecord, contentDescription = "Grabando", tint = Color.Red, modifier = Modifier.size(16.dp))
@@ -527,10 +503,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     if (!modoMezcladora) {
                         Spacer(modifier = Modifier.height(8.dp))
                         if (trackDuration > 0) {
-                            LinearProgressIndicator(
-                                progress = { trackElapsed.toFloat() / trackDuration.toFloat() },
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            LinearProgressIndicator(progress = { trackElapsed.toFloat() / trackDuration.toFloat() }, modifier = Modifier.fillMaxWidth())
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
@@ -567,26 +540,13 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
                 if (todosLosArchivos.isNotEmpty()) {
                     Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 200.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    LazyColumn(modifier = Modifier.heightIn(max = 200.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(todosLosArchivos) { cancion ->
                             val isSelected = listaReproduccion.contains(cancion)
                             Card(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Checkbox(
-                                        checked = isSelected,
-                                        onCheckedChange = { toggleSeleccion(cancion) }
-                                    )
-                                    Text(
-                                        text = cancion.second,
-                                        modifier = Modifier.weight(1f),
-                                        maxLines = 1
-                                    )
+                                Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = isSelected, onCheckedChange = { toggleSeleccion(cancion) })
+                                    Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
                                 }
                             }
                         }
@@ -596,42 +556,17 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
             if (listaReproduccion.isNotEmpty()) {
                 Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 250.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
+                LazyColumn(modifier = Modifier.heightIn(max = 250.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     itemsIndexed(listaReproduccion) { index, cancion ->
                         Card(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = cancion.second,
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 1
-                                )
+                            Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
                                 Row {
-                                    IconButton(
-                                        onClick = { moverArriba(index) }, 
-                                        enabled = index > 0 && !conectado
-                                    ) {
-                                        Icon(
-                                            Icons.Default.KeyboardArrowUp, 
-                                            contentDescription = "Subir", 
-                                            tint = if (index > 0 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray
-                                        )
+                                    IconButton(onClick = { moverArriba(index) }, enabled = index > 0 && !conectado) {
+                                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray)
                                     }
-                                    IconButton(
-                                        onClick = { moverAbajo(index) }, 
-                                        enabled = index < listaReproduccion.size - 1 && !conectado
-                                    ) {
-                                        Icon(
-                                            Icons.Default.KeyboardArrowDown, 
-                                            contentDescription = "Bajar", 
-                                            tint = if (index < listaReproduccion.size - 1 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray
-                                        )
+                                    IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1 && !conectado) {
+                                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1 && !conectado) MaterialTheme.colorScheme.primary else Color.Gray)
                                     }
                                 }
                             }
@@ -647,18 +582,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
-                    
                     Spacer(modifier = Modifier.height(16.dp))
-                    
-                    OutlinedTextField(
-                        value = nombrePrograma,
-                        onValueChange = { nombrePrograma = it },
-                        label = { Text("Nombre del programa (Para la App Receptora)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    
+                    OutlinedTextField(value = nombrePrograma, onValueChange = { nombrePrograma = it }, label = { Text("Nombre del programa") }, modifier = Modifier.fillMaxWidth())
                     Spacer(modifier = Modifier.height(16.dp))
-                    
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it })
                         Spacer(modifier = Modifier.width(8.dp))
@@ -678,15 +604,11 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     if (modoMezcladora) {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                             cancionActual = nombrePrograma
-                            trackElapsed = 0L
-                            trackDuration = 0L
+                            trackElapsed = 0L; trackDuration = 0L
                             val intent = Intent(context, StreamService::class.java).apply {
-                                putExtra("IP", ip)
-                                putExtra("PORT", puerto.toIntOrNull() ?: 8017)
-                                putExtra("PASS", password)
+                                putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
                                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
-                                putExtra("LINE_IN_MODE", true)
-                                putExtra("RECORD_STREAM", grabarMezcladora)
+                                putExtra("LINE_IN_MODE", true); putExtra("RECORD_STREAM", grabarMezcladora)
                                 putExtra("PROGRAM_NAME", nombrePrograma)
                             }
                             context.startForegroundService(intent)
@@ -706,11 +628,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                 settings[stringPreferencesKey("PORT")] = puerto
                                 settings[stringPreferencesKey("PASS")] = password
                             }
-                            
                             val intent = Intent(context, StreamService::class.java).apply {
-                                putExtra("IP", ip)
-                                putExtra("PORT", puerto.toIntOrNull() ?: 8017)
-                                putExtra("PASS", password)
+                                putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
                                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
                                 putExtra("LINE_IN_MODE", false)
                                 putStringArrayListExtra("URIS", ArrayList(listaReproduccion.map { it.first.toString() }))

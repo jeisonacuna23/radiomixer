@@ -12,8 +12,8 @@ android {
         applicationId = "com.turadio.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 17 // Versión 2.6
-        versionName = "2.6"
+        versionCode = 18 // Versión 2.7
+        versionName = "2.7"
     }
 
     signingConfigs {
