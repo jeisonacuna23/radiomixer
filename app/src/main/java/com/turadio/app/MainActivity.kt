@@ -15,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -55,12 +57,32 @@ import org.json.JSONObject
 
 val Context.dataStore by preferencesDataStore(name = "settings")
 
+// PALETA DE COLORES BASADA EN EL LOGO
+val DarkPlum = Color(0xFF4A0E4E)      // Morado oscuro principal
+val LightPlum = Color(0xFF7B2C7E)     // Morado más claro para variantes
+val AccentPink = Color(0xFFD65DB1)    // Rosa de acento para botones flotantes
+val BgLight = Color(0xFFFDF7FF)       // Fondo ligeramente morado
+val TextDark = Color(0xFF2C082F)      // Texto casi negro para buena lectura
+
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
-            MaterialTheme {
+            MaterialTheme(
+                colorScheme = lightColorScheme(
+                    primary = DarkPlum,
+                    onPrimary = Color.White,
+                    primaryContainer = LightPlum,
+                    onPrimaryContainer = Color.White,
+                    secondary = AccentPink,
+                    onSecondary = Color.White,
+                    background = BgLight,
+                    onBackground = TextDark,
+                    surface = Color.White,
+                    onSurface = TextDark
+                )
+            ) {
                 Surface(modifier = Modifier.fillMaxSize()) { AppRoot() }
             }
         }
@@ -84,7 +106,8 @@ fun AppRoot() {
         if (savedPin == null) isLocked = false
     }
 
-    LaunchedEffect(isLocked, savedPin) {
+    // Ya no se lanza automáticamente la huella, se hace desde el botón en LockScreen
+    fun authenticateWithBiometrics() {
         if (isLocked && savedPin != null) {
             val biometricManager = BiometricManager.from(context)
             if (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS) {
@@ -96,7 +119,10 @@ fun AppRoot() {
                             isLocked = false
                         }
                     })
-                val promptInfo = BiometricPrompt.PromptInfo.Builder().setTitle("Desbloquear RadioMixer").setNegativeButtonText("Usar PIN").build()
+                val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("Desbloquear RadioMixer")
+                    .setNegativeButtonText("Cancelar")
+                    .build()
                 biometricPrompt.authenticate(promptInfo)
             }
         }
@@ -105,7 +131,7 @@ fun AppRoot() {
     if (isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     } else if (isLocked && savedPin != null) {
-        LockScreen(savedPin = savedPin!!) { isLocked = false }
+        LockScreen(savedPin = savedPin!!, onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() })
     } else {
         PantallaPrincipal(savedPin = savedPin, onPinSet = { newPin ->
             scope.launch {
@@ -117,24 +143,62 @@ fun AppRoot() {
 }
 
 @Composable
-fun LockScreen(savedPin: String, onUnlock: () -> Unit) {
+fun LockScreen(savedPin: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
     var pinInput by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
+    
+    // Verificar si el dispositivo soporta huella para mostrar u ocultar el botón
+    val context = LocalContext.current
+    val biometricManager = BiometricManager.from(context)
+    val canUseBiometric = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
 
-    Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Icon(Icons.Default.Lock, contentDescription = "Bloqueado", modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+    Column(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        // LOGO EN PANTALLA DE BLOQUEO
+        Image(
+            painter = painterResource(id = R.drawable.logo_new),
+            contentDescription = "Logo A Voz en Cuello",
+            modifier = Modifier.size(160.dp)
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Text("Ingrese su PIN", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Ingrese su PIN", style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.height(16.dp))
+        
         OutlinedTextField(
-            value = pinInput, onValueChange = { if (it.length <= 4) pinInput = it; error = false },
+            value = pinInput, 
+            onValueChange = { if (it.length <= 4) pinInput = it; error = false },
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            isError = error, label = { Text("PIN de 4 dígitos") }, modifier = Modifier.fillMaxWidth()
+            isError = error, 
+            label = { Text("PIN de 4 dígitos") }, 
+            modifier = Modifier.fillMaxWidth()
         )
         if (error) Text("PIN incorrecto", color = MaterialTheme.colorScheme.error)
+        
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Button(onClick = { if (pinInput == savedPin) onUnlock() else error = true }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+            Text("Desbloquear")
+        }
+        
         Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = { if (pinInput == savedPin) onUnlock() else error = true }, modifier = Modifier.fillMaxWidth()) { Text("Desbloquear") }
+        
+        // BOTÓN MANUAL PARA LA HUELLA
+        if (canUseBiometric) {
+            OutlinedButton(
+                onClick = onBiometricClick,
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkPlum)
+            ) {
+                Icon(Icons.Default.Fingerprint, contentDescription = "Huella")
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Usar Huella Dactilar")
+            }
+        }
     }
 }
 
@@ -389,7 +453,14 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("RadioMixer", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            Image(
+                painter = painterResource(id = R.drawable.logo_new),
+                contentDescription = "Logo",
+                modifier = Modifier.size(40.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f))
+            
             IconButton(onClick = { tempMinutes = minutosAutoStop; showAutoStopDialog = true }) {
                 Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
             }
@@ -398,10 +469,10 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
         if (!conectado) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { modoMezcladora = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)) {
+                Button(onClick = { modoMezcladora = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, contentColor = if (!modoMezcladora) Color.White else Color.Gray)) {
                     Icon(Icons.Default.MusicNote, contentDescription = null); Spacer(modifier = Modifier.width(4.dp)); Text("Auto-DJ")
                 }
-                Button(onClick = { modoMezcladora = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)) {
+                Button(onClick = { modoMezcladora = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, contentColor = if (modoMezcladora) Color.White else Color.Gray)) {
                     Icon(Icons.Default.SettingsInputComponent, contentDescription = null); Spacer(modifier = Modifier.width(4.dp)); Text("Mezcladora")
                 }
             }
@@ -410,7 +481,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
         
         if (conectado) {
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.PlayArrow, contentDescription = "En vivo", tint = MaterialTheme.colorScheme.error)
@@ -418,9 +489,9 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
                         
                         Spacer(modifier = Modifier.weight(1f))
-                        Icon(Icons.Default.People, contentDescription = "Oyentes", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.People, contentDescription = "Oyentes", modifier = Modifier.size(16.dp), tint = DarkPlum)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("$oyentes", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text("$oyentes", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = DarkPlum)
 
                         if (isRecordingActive) {
                             Spacer(modifier = Modifier.width(8.dp))
@@ -454,7 +525,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                                     context.startService(intent)
                                     isLiveMicUi = false
                                 }
-                            }
+                            },
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = DarkPlum)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(if (isLiveMicUi) "Modo Mezcladora (En vivo)" else "Modo Auto-DJ", style = MaterialTheme.typography.bodyMedium)
@@ -477,31 +549,31 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         )
                     }
 
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
-                    Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge)
+                    Divider(modifier = Modifier.padding(vertical = 8.dp), color = Color.LightGray)
+                    Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge, color = TextDark)
                     
                     if (!isLiveMicUi) {
                         Spacer(modifier = Modifier.height(8.dp))
                         if (trackDuration > 0) {
-                            LinearProgressIndicator(progress = { trackElapsed.toFloat() / trackDuration.toFloat() }, modifier = Modifier.fillMaxWidth())
+                            LinearProgressIndicator(progress = { trackElapsed.toFloat() / trackDuration.toFloat() }, modifier = Modifier.fillMaxWidth(), color = DarkPlum)
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
                                 Text(formatTime(trackDuration), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
                             }
-                        } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = DarkPlum)
                     }
 
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                    Divider(modifier = Modifier.padding(vertical = 8.dp), color = Color.LightGray)
                     
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column {
                             Text("Tiempo al aire:", style = MaterialTheme.typography.labelMedium)
-                            Text(tiempoAlAire, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace)
+                            Text(tiempoAlAire, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = TextDark)
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Restante Auto-Stop:", style = MaterialTheme.typography.labelMedium)
-                            Text(tiempoRestante, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+                            Text(tiempoRestante, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = DarkPlum)
                         }
                     }
                 }
@@ -510,18 +582,18 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
         if (!conectado) {
             if (!modoMezcladora) {
-                Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = LightPlum)) {
                     Icon(Icons.Default.Folder, contentDescription = "Carpeta"); Spacer(modifier = Modifier.width(8.dp)); Text("Seleccionar Carpeta de Música")
                 }
 
                 if (todosLosArchivos.isNotEmpty()) {
-                    Text("Catálogo de Música (Selecciona los que sonarán):", style = MaterialTheme.typography.titleMedium)
+                    Text("Catálogo de Música:", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
                     LazyColumn(modifier = Modifier.heightIn(max = 200.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(todosLosArchivos) { cancion ->
                             val isSelected = listaReproduccion.contains(cancion)
-                            Card(modifier = Modifier.fillMaxWidth()) {
+                            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
                                 Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(checked = isSelected, onCheckedChange = { toggleSeleccion(cancion) })
+                                    Checkbox(checked = isSelected, onCheckedChange = { toggleSeleccion(cancion) }, colors = CheckboxDefaults.colors(checkedColor = DarkPlum))
                                     Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
                                 }
                             }
@@ -530,15 +602,15 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 }
 
                 if (listaReproduccion.isNotEmpty()) {
-                    Text("Lista de Reproducción (En orden):", style = MaterialTheme.typography.titleMedium)
+                    Text("Lista de Reproducción:", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
                     LazyColumn(modifier = Modifier.heightIn(max = 250.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         itemsIndexed(listaReproduccion) { index, cancion ->
-                            Card(modifier = Modifier.fillMaxWidth()) {
+                            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
                                 Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
                                     Row {
-                                        IconButton(onClick = { moverArriba(index) }, enabled = index > 0) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) MaterialTheme.colorScheme.primary else Color.Gray) }
-                                        IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1) MaterialTheme.colorScheme.primary else Color.Gray) }
+                                        IconButton(onClick = { moverArriba(index) }, enabled = index > 0) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) DarkPlum else Color.Gray) }
+                                        IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1) DarkPlum else Color.Gray) }
                                     }
                                 }
                             }
@@ -546,18 +618,18 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     }
                 }
             } else {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
                     Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.SettingsInputComponent, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.secondary)
+                        Icon(Icons.Default.SettingsInputComponent, contentDescription = null, modifier = Modifier.size(48.dp), tint = LightPlum)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium)
+                        Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
                         Spacer(modifier = Modifier.height(16.dp))
                         OutlinedTextField(value = nombrePrograma, onValueChange = { nombrePrograma = it }, label = { Text("Nombre del programa") }, modifier = Modifier.fillMaxWidth())
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it })
+                            Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = DarkPlum))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Grabar transmisión localmente", style = MaterialTheme.typography.bodyMedium)
                         }
@@ -607,7 +679,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
                 context.startService(intent); conectado = false; mensajeEstado = "Transmisión detenida."
             }
-        }, modifier = Modifier.fillMaxWidth().height(60.dp), colors = ButtonDefaults.buttonColors(containerColor = if (conectado) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)) {
+        }, modifier = Modifier.fillMaxWidth().height(60.dp), colors = ButtonDefaults.buttonColors(containerColor = if (conectado) MaterialTheme.colorScheme.error else DarkPlum)) {
             Icon(if (conectado) Icons.Default.Close else Icons.Default.PlayArrow, contentDescription = "Play/Stop")
             Spacer(modifier = Modifier.width(8.dp))
             Text(if (conectado) "DETENER TRANSMISIÓN" else "INICIAR TRANSMISIÓN")
