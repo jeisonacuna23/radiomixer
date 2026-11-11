@@ -159,6 +159,7 @@ class StreamService : Service() {
                         isConnected = false
                         currentStatus = "Señal perdida. Reconectando..."
                         updateNotification(currentStatus, "Esperando red...")
+                        LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("ERROR_UPDATE").putExtra("ERROR_MSG", error))
                         serviceScope.launch { delay(5000); if (isStreaming) conectarAServidor() }
                     }
                 )
@@ -315,7 +316,6 @@ class StreamService : Service() {
             
             LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("TRACK_DURATION_UPDATE").putExtra("DURATION", trackDurationSeconds))
             
-            // VOLVEMOS AL MODO DIRECTO
             enviarAudioNativo(uriActual)
 
             index++
