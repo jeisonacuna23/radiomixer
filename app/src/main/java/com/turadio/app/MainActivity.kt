@@ -57,12 +57,11 @@ import org.json.JSONObject
 
 val Context.dataStore by preferencesDataStore(name = "settings")
 
-// PALETA DE COLORES BASADA EN EL LOGO
-val DarkPlum = Color(0xFF4A0E4E)      // Morado oscuro principal
-val LightPlum = Color(0xFF7B2C7E)     // Morado más claro para variantes
-val AccentPink = Color(0xFFD65DB1)    // Rosa de acento para botones flotantes
-val BgLight = Color(0xFFFDF7FF)       // Fondo ligeramente morado
-val TextDark = Color(0xFF2C082F)      // Texto casi negro para buena lectura
+val DarkPlum = Color(0xFF4A0E4E)
+val LightPlum = Color(0xFF7B2C7E)
+val AccentPink = Color(0xFFD65DB1)
+val BgLight = Color(0xFFFDF7FF)
+val TextDark = Color(0xFF2C082F)
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,16 +70,9 @@ class MainActivity : FragmentActivity() {
         setContent {
             MaterialTheme(
                 colorScheme = lightColorScheme(
-                    primary = DarkPlum,
-                    onPrimary = Color.White,
-                    primaryContainer = LightPlum,
-                    onPrimaryContainer = Color.White,
-                    secondary = AccentPink,
-                    onSecondary = Color.White,
-                    background = BgLight,
-                    onBackground = TextDark,
-                    surface = Color.White,
-                    onSurface = TextDark
+                    primary = DarkPlum, onPrimary = Color.White, primaryContainer = LightPlum, onPrimaryContainer = Color.White,
+                    secondary = AccentPink, onSecondary = Color.White, background = BgLight, onBackground = TextDark,
+                    surface = Color.White, onSurface = TextDark
                 )
             ) {
                 Surface(modifier = Modifier.fillMaxSize()) { AppRoot() }
@@ -106,7 +98,6 @@ fun AppRoot() {
         if (savedPin == null) isLocked = false
     }
 
-    // Ya no se lanza automáticamente la huella, se hace desde el botón en LockScreen
     fun authenticateWithBiometrics() {
         if (isLocked && savedPin != null) {
             val biometricManager = BiometricManager.from(context)
@@ -119,10 +110,7 @@ fun AppRoot() {
                             isLocked = false
                         }
                     })
-                val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Desbloquear RadioMixer")
-                    .setNegativeButtonText("Cancelar")
-                    .build()
+                val promptInfo = BiometricPrompt.PromptInfo.Builder().setTitle("Desbloquear RadioMixer").setNegativeButtonText("Cancelar").build()
                 biometricPrompt.authenticate(promptInfo)
             }
         }
@@ -146,57 +134,31 @@ fun AppRoot() {
 fun LockScreen(savedPin: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
     var pinInput by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
-    
-    // Verificar si el dispositivo soporta huella para mostrar u ocultar el botón
     val context = LocalContext.current
     val biometricManager = BiometricManager.from(context)
     val canUseBiometric = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        // LOGO EN PANTALLA DE BLOQUEO
-        Image(
-            painter = painterResource(id = R.drawable.logo_new),
-            contentDescription = "Logo A Voz en Cuello",
-            modifier = Modifier.size(160.dp)
-        )
+    Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo A Voz en Cuello", modifier = Modifier.size(160.dp))
         Spacer(modifier = Modifier.height(24.dp))
-        
         Text("Ingrese su PIN", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
         Spacer(modifier = Modifier.height(16.dp))
         
         OutlinedTextField(
-            value = pinInput, 
-            onValueChange = { if (it.length <= 4) pinInput = it; error = false },
+            value = pinInput, onValueChange = { if (it.length <= 4) pinInput = it; error = false },
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            isError = error, 
-            label = { Text("PIN de 4 dígitos") }, 
-            modifier = Modifier.fillMaxWidth()
+            isError = error, label = { Text("PIN de 4 dígitos") }, modifier = Modifier.fillMaxWidth()
         )
         if (error) Text("PIN incorrecto", color = MaterialTheme.colorScheme.error)
         
         Spacer(modifier = Modifier.height(24.dp))
-        
-        Button(onClick = { if (pinInput == savedPin) onUnlock() else error = true }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-            Text("Desbloquear")
-        }
-        
+        Button(onClick = { if (pinInput == savedPin) onUnlock() else error = true }, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("Desbloquear") }
         Spacer(modifier = Modifier.height(16.dp))
         
-        // BOTÓN MANUAL PARA LA HUELLA
         if (canUseBiometric) {
-            OutlinedButton(
-                onClick = onBiometricClick,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkPlum)
-            ) {
-                Icon(Icons.Default.Fingerprint, contentDescription = "Huella")
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Usar Huella Dactilar")
+            OutlinedButton(onClick = onBiometricClick, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkPlum)) {
+                Icon(Icons.Default.Fingerprint, contentDescription = "Huella"); Spacer(modifier = Modifier.width(8.dp)); Text("Usar Huella Dactilar")
             }
         }
     }
@@ -453,11 +415,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Image(
-                painter = painterResource(id = R.drawable.logo_new),
-                contentDescription = "Logo",
-                modifier = Modifier.size(40.dp)
-            )
+            Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(40.dp))
             Spacer(modifier = Modifier.width(8.dp))
             Text("A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f))
             
@@ -580,8 +538,8 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             }
         }
 
-        if (!conectado) {
-            if (!modoMezcladora) {
+        if (!modoMezcladora) {
+            if (!conectado) {
                 Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = LightPlum)) {
                     Icon(Icons.Default.Folder, contentDescription = "Carpeta"); Spacer(modifier = Modifier.width(8.dp)); Text("Seleccionar Carpeta de Música")
                 }
@@ -600,39 +558,44 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                         }
                     }
                 }
+            }
 
-                if (listaReproduccion.isNotEmpty()) {
-                    Text("Lista de Reproducción:", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
-                    LazyColumn(modifier = Modifier.heightIn(max = 250.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        itemsIndexed(listaReproduccion) { index, cancion ->
-                            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                                Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
-                                    Row {
-                                        IconButton(onClick = { moverArriba(index) }, enabled = index > 0) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0) DarkPlum else Color.Gray) }
-                                        IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1) DarkPlum else Color.Gray) }
+            // LA PLAYLIST AHORA SE MUESTRA SIEMPRE (Conectado o no)
+            if (listaReproduccion.isNotEmpty()) {
+                Text("Lista de Reproducción:", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
+                LazyColumn(modifier = Modifier.heightIn(max = 250.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    itemsIndexed(listaReproduccion) { index, cancion ->
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                            Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
+                                Row {
+                                    IconButton(onClick = { moverArriba(index) }, enabled = index > 0 && !conectado) { 
+                                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0 && !conectado) DarkPlum else Color.Gray) 
+                                    }
+                                    IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1 && !conectado) { 
+                                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1 && !conectado) DarkPlum else Color.Gray) 
                                     }
                                 }
                             }
                         }
                     }
                 }
-            } else {
-                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                    Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.SettingsInputComponent, contentDescription = null, modifier = Modifier.size(48.dp), tint = LightPlum)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        OutlinedTextField(value = nombrePrograma, onValueChange = { nombrePrograma = it }, label = { Text("Nombre del programa") }, modifier = Modifier.fillMaxWidth())
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = DarkPlum))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Grabar transmisión localmente", style = MaterialTheme.typography.bodyMedium)
-                        }
+            }
+        } else if (!conectado) {
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.SettingsInputComponent, contentDescription = null, modifier = Modifier.size(48.dp), tint = LightPlum)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Modo Mezcladora / Line-In", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(value = nombrePrograma, onValueChange = { nombrePrograma = it }, label = { Text("Nombre del programa") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = DarkPlum))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Grabar transmisión localmente", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }

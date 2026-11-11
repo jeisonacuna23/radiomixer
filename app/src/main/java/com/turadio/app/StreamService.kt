@@ -315,151 +315,76 @@ class StreamService : Service() {
             
             LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("TRACK_DURATION_UPDATE").putExtra("DURATION", trackDurationSeconds))
             
-            enviarAudioEstandarizado(uriActual)
+            // VOLVEMOS AL MODO DIRECTO
+            enviarAudioNativo(uriActual)
 
             index++
             if (index >= uris.size) index = 0
         }
     }
 
-    private fun enviarAudioEstandarizado(uri: Uri) {
+    private fun enviarAudioNativo(uri: Uri) {
         val extractor = MediaExtractor()
-        var decoder: MediaCodec? = null
-        var encoder: MediaCodec? = null
-
         try {
             contentResolver.openFileDescriptor(uri, "r")?.use { pfd -> extractor.setDataSource(pfd.fileDescriptor) }
 
             var audioTrackIndex = -1
+            var isAac = false
+            var sampleRate = 44100
+            var channelCount = 2
+            
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
                 if (mime.startsWith("audio/")) {
                     audioTrackIndex = i
+                    if (mime.contains("aac") || mime.contains("mp4a")) {
+                        isAac = true
+                        sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    }
                     break
                 }
             }
 
             if (audioTrackIndex < 0) return
             extractor.selectTrack(audioTrackIndex)
-
-            val inputFormat = extractor.getTrackFormat(audioTrackIndex)
-            val mime = inputFormat.getString(MediaFormat.KEY_MIME) ?: return
-            
-            // LEEMOS LA FRECUENCIA Y CANALES DEL ARCHIVO ORIGINAL
-            val inputSampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            val inputChannels = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-
-            decoder = MediaCodec.createDecoderByType(mime)
-            decoder.configure(inputFormat, null, null, 0)
-            decoder.start()
-
-            // EL CODIFICADOR USA LA MISMA FRECUENCIA Y CANALES (Evita el efecto helio/lento)
-            val outputFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, inputSampleRate, inputChannels).apply {
-                setInteger(MediaFormat.KEY_BIT_RATE, 64000)
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 65536)
-            }
-            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-            encoder.configure(outputFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            encoder.start()
-
-            val decoderBufferInfo = MediaCodec.BufferInfo()
-            val encoderBufferInfo = MediaCodec.BufferInfo()
-
-            var isInputDone = false
-            var isDecoderDone = false
-            var isEncoderDone = false
-
+            val buffer = ByteBuffer.allocate(65536)
+            var bytesEnviadosTotales = 0L
             val tiempoInicio = System.currentTimeMillis()
             var lastBroadcastedSecond = -1L
 
-            while (isStreaming && isConnected && !isLiveMicActive && !isEncoderDone) {
-                if (!isInputDone) {
-                    val inIndex = decoder.dequeueInputBuffer(10000)
-                    if (inIndex >= 0) {
-                        val inBuf = decoder.getInputBuffer(inIndex)
-                        if (inBuf != null) {
-                            val sampleSize = extractor.readSampleData(inBuf, 0)
-                            if (sampleSize < 0) {
-                                decoder.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                isInputDone = true
-                            } else {
-                                decoder.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
-                                extractor.advance()
-                            }
-                        }
-                    }
+            while (isStreaming && isConnected && !isLiveMicActive) {
+                val sampleSize = extractor.readSampleData(buffer, 0)
+                if (sampleSize < 0) break
+
+                var audioData = ByteArray(sampleSize)
+                buffer.position(0); buffer.get(audioData)
+
+                if (isAac) audioData = addAdtsHeader(audioData, sampleRate, channelCount)
+
+                shoutcastClient?.sendAudio(audioData, audioData.size)
+                bytesEnviadosTotales += audioData.size
+                extractor.advance()
+
+                val currentTrackSecond = bytesEnviadosTotales / 8000
+                if (currentTrackSecond > lastBroadcastedSecond) {
+                    lastBroadcastedSecond = currentTrackSecond
+                    LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("TRACK_PROGRESS_UPDATE").putExtra("PROGRESS", currentTrackSecond))
                 }
 
-                if (!isDecoderDone) {
-                    val outIndex = decoder.dequeueOutputBuffer(decoderBufferInfo, 10000)
-                    if (outIndex >= 0) {
-                        if (decoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                            isDecoderDone = true
-                        }
-                        if (decoderBufferInfo.size > 0) {
-                            val outBuf = decoder.getOutputBuffer(outIndex)
-                            outBuf?.position(decoderBufferInfo.offset)
-                            outBuf?.limit(decoderBufferInfo.offset + decoderBufferInfo.size)
-
-                            val encInIndex = encoder.dequeueInputBuffer(10000)
-                            if (encInIndex >= 0) {
-                                val encInBuf = encoder.getInputBuffer(encInIndex)
-                                encInBuf?.clear()
-                                if (outBuf != null) encInBuf?.put(outBuf)
-                                encoder.queueInputBuffer(encInIndex, 0, decoderBufferInfo.size, decoderBufferInfo.presentationTimeUs, 0)
-                            }
-                        }
-                        decoder.releaseOutputBuffer(outIndex, false)
-                    }
-                }
-
-                val encOutIndex = encoder.dequeueOutputBuffer(encoderBufferInfo, 10000)
-                if (encOutIndex >= 0) {
-                    if (encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                        isEncoderDone = true
-                    }
-                    if (encoderBufferInfo.size > 0) {
-                        val outBuf = encoder.getOutputBuffer(encOutIndex)
-                        if (outBuf != null) {
-                            val aacData = ByteArray(encoderBufferInfo.size)
-                            outBuf.position(encoderBufferInfo.offset)
-                            outBuf.get(aacData)
-                            
-                            val adtsData = addAdtsHeader(aacData, inputSampleRate, inputChannels)
-                            
-                            if (isStreaming && isConnected) {
-                                shoutcastClient?.sendAudio(adtsData, adtsData.size)
-                            }
-                            
-                            val currentTrackSecond = encoderBufferInfo.presentationTimeUs / 1_000_000L
-                            if (currentTrackSecond > lastBroadcastedSecond) {
-                                lastBroadcastedSecond = currentTrackSecond
-                                LocalBroadcastManager.getInstance(this).sendBroadcast(
-                                    Intent("TRACK_PROGRESS_UPDATE").putExtra("PROGRESS", currentTrackSecond)
-                                )
-                            }
-                            
-                            // PACING CORREGIDO: Usa el tiempo real de presentación, no los bytes
-                            val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
-                            val tiempoQueDeberiaTardarMs = encoderBufferInfo.presentationTimeUs / 1000.0
-                            val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
-                            
-                            if (tiempoEspera > 0) {
-                                val esperaReal = minOf(tiempoEspera.toLong(), 200L)
-                                Thread.sleep(esperaReal)
-                            }
-                        }
-                    }
-                    encoder.releaseOutputBuffer(encOutIndex, false)
+                val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
+                val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
+                val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
+                
+                if (tiempoEspera > 0) {
+                    val esperaReal = minOf(tiempoEspera.toLong(), 200L)
+                    Thread.sleep(esperaReal)
                 }
             }
         } catch (e: Exception) {
         } finally {
-            try { extractor.release() } catch (e: Exception) {}
-            try { decoder?.stop(); decoder?.release() } catch (e: Exception) {}
-            try { encoder?.stop(); encoder?.release() } catch (e: Exception) {}
+            extractor.release()
         }
     }
 
