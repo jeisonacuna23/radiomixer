@@ -143,7 +143,7 @@ class StreamService : Service() {
                 val credentials = GoogleCredentials.fromStream(jsonString.byteInputStream()).createScoped(listOf("https://www.googleapis.com/auth/firebase.messaging"))
                 credentials.refreshIfExpired()
                 val url = "https://fcm.googleapis.com/v1/projects/$projectId/messages:send"
-                val jsonPush = """{"message": {"topic": "radio_en_vivo","notification": {"title": "A voz en cuello","body": "La transmisión ha finalizado."}}}"""
+                val jsonPush = """{"message": {"topic": "radio_en_vivo","notification": {"title": "A Voz en Cuello","body": "La transmisión ha finalizado."}}}"""
                 client.newCall(Request.Builder().url(url).addHeader("Authorization", "Bearer ${credentials.accessToken.tokenValue}").post(jsonPush.toRequestBody("application/json".toMediaType())).build()).execute().close()
             } catch (e: Exception) { e.printStackTrace() }
         }
@@ -289,8 +289,6 @@ class StreamService : Service() {
         var index = 0
         while (isStreaming && isConnected && uris.isNotEmpty()) {
             if (isLiveMicActive) {
-                index++
-                if (index >= uris.size) index = 0
                 Thread.sleep(500)
                 continue
             }
@@ -316,76 +314,156 @@ class StreamService : Service() {
             } finally { retriever.release() }
             
             LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("TRACK_DURATION_UPDATE").putExtra("DURATION", trackDurationSeconds))
-            enviarAudioNativo(uriActual)
+            
+            // AQUI LLAMAMOS AL ESTANDARIZADOR
+            enviarAudioEstandarizado(uriActual)
 
             index++
             if (index >= uris.size) index = 0
         }
     }
 
-    private fun enviarAudioNativo(uri: Uri) {
+    // ESTANDARIZADOR: Decodifica, ajusta a 44100 Hz y recodifica a AAC 64kbps
+    private fun enviarAudioEstandarizado(uri: Uri) {
         val extractor = MediaExtractor()
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
+
         try {
             contentResolver.openFileDescriptor(uri, "r")?.use { pfd -> extractor.setDataSource(pfd.fileDescriptor) }
 
             var audioTrackIndex = -1
-            var isAac = false
-            var sampleRate = 44100
-            var channelCount = 2
-            
             for (i in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
                 if (mime.startsWith("audio/")) {
                     audioTrackIndex = i
-                    if (mime.contains("aac") || mime.contains("mp4a")) {
-                        isAac = true
-                        sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                        channelCount = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                    }
                     break
                 }
             }
 
             if (audioTrackIndex < 0) return
             extractor.selectTrack(audioTrackIndex)
-            val buffer = ByteBuffer.allocate(65536)
+
+            val inputFormat = extractor.getTrackFormat(audioTrackIndex)
+            val mime = inputFormat.getString(MediaFormat.KEY_MIME) ?: return
+
+            // 1. Configurar Decodificador (Lee el archivo original)
+            decoder = MediaCodec.createDecoderByType(mime)
+            decoder.configure(inputFormat, null, null, 0)
+            decoder.start()
+
+            // 2. Configurar Codificador (Lo estandariza a 44100 Hz)
+            val outputFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 44100, 2).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, 64000)
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 65536)
+            }
+            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            encoder.configure(outputFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
+            val decoderBufferInfo = MediaCodec.BufferInfo()
+            val encoderBufferInfo = MediaCodec.BufferInfo()
+
+            var isInputDone = false
+            var isDecoderDone = false
+            var isEncoderDone = false
+
             var bytesEnviadosTotales = 0L
             val tiempoInicio = System.currentTimeMillis()
             var lastBroadcastedSecond = -1L
 
-            while (isStreaming && isConnected && !isLiveMicActive) {
-                val sampleSize = extractor.readSampleData(buffer, 0)
-                if (sampleSize < 0) break
-
-                var audioData = ByteArray(sampleSize)
-                buffer.position(0); buffer.get(audioData)
-
-                if (isAac) audioData = addAdtsHeader(audioData, sampleRate, channelCount)
-
-                shoutcastClient?.sendAudio(audioData, audioData.size)
-                bytesEnviadosTotales += audioData.size
-                extractor.advance()
-
-                val currentTrackSecond = bytesEnviadosTotales / 8000
-                if (currentTrackSecond > lastBroadcastedSecond) {
-                    lastBroadcastedSecond = currentTrackSecond
-                    LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("TRACK_PROGRESS_UPDATE").putExtra("PROGRESS", currentTrackSecond))
+            while (isStreaming && isConnected && !isLiveMicActive && !isEncoderDone) {
+                // A. Alimentar Decodificador
+                if (!isInputDone) {
+                    val inIndex = decoder.dequeueInputBuffer(10000)
+                    if (inIndex >= 0) {
+                        val inBuf = decoder.getInputBuffer(inIndex)
+                        if (inBuf != null) {
+                            val sampleSize = extractor.readSampleData(inBuf, 0)
+                            if (sampleSize < 0) {
+                                decoder.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                isInputDone = true
+                            } else {
+                                decoder.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
+                                extractor.advance()
+                            }
+                        }
+                    }
                 }
 
-                val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
-                val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
-                val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
-                
-                // EL CAMBIO ESTÁ AQUÍ: Nunca dormir más de 200 ms
-                if (tiempoEspera > 0) {
-                    val esperaReal = minOf(tiempoEspera.toLong(), 200L)
-                    Thread.sleep(esperaReal)
+                // B. Decodificador -> Codificador
+                if (!isDecoderDone) {
+                    val outIndex = decoder.dequeueOutputBuffer(decoderBufferInfo, 10000)
+                    if (outIndex >= 0) {
+                        if (decoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                            isDecoderDone = true
+                        }
+                        if (decoderBufferInfo.size > 0) {
+                            val outBuf = decoder.getOutputBuffer(outIndex)
+                            outBuf?.position(decoderBufferInfo.offset)
+                            outBuf?.limit(decoderBufferInfo.offset + decoderBufferInfo.size)
+
+                            val encInIndex = encoder.dequeueInputBuffer(10000)
+                            if (encInIndex >= 0) {
+                                val encInBuf = encoder.getInputBuffer(encInIndex)
+                                encInBuf?.clear()
+                                if (outBuf != null) encInBuf?.put(outBuf)
+                                encoder.queueInputBuffer(encInIndex, 0, decoderBufferInfo.size, decoderBufferInfo.presentationTimeUs, 0)
+                            }
+                        }
+                        decoder.releaseOutputBuffer(outIndex, false)
+                    }
+                }
+
+                // C. Codificador -> Red
+                val encOutIndex = encoder.dequeueOutputBuffer(encoderBufferInfo, 10000)
+                if (encOutIndex >= 0) {
+                    if (encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                        isEncoderDone = true
+                    }
+                    if (encoderBufferInfo.size > 0) {
+                        val outBuf = encoder.getOutputBuffer(encOutIndex)
+                        if (outBuf != null) {
+                            val aacData = ByteArray(encoderBufferInfo.size)
+                            outBuf.position(encoderBufferInfo.offset)
+                            outBuf.get(aacData)
+                            
+                            val adtsData = addAdtsHeader(aacData, 44100, 2)
+                            
+                            if (isStreaming && isConnected) {
+                                shoutcastClient?.sendAudio(adtsData, adtsData.size)
+                            }
+                            bytesEnviadosTotales += adtsData.size
+                            
+                            val currentTrackSecond = bytesEnviadosTotales / 8000
+                            if (currentTrackSecond > lastBroadcastedSecond) {
+                                lastBroadcastedSecond = currentTrackSecond
+                                LocalBroadcastManager.getInstance(this).sendBroadcast(
+                                    Intent("TRACK_PROGRESS_UPDATE").putExtra("PROGRESS", currentTrackSecond)
+                                )
+                            }
+                            
+                            // CONTROL DE TIEMPO (PACING)
+                            val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
+                            val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
+                            val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
+                            if (tiempoEspera > 0) {
+                                val esperaReal = minOf(tiempoEspera.toLong(), 200L)
+                                Thread.sleep(esperaReal)
+                            }
+                        }
+                    }
+                    encoder.releaseOutputBuffer(encOutIndex, false)
                 }
             }
         } catch (e: Exception) {
+            // Si el archivo está dañado, ignoramos el error y pasamos a la siguiente canción
         } finally {
-            extractor.release()
+            try { extractor.release() } catch (e: Exception) {}
+            try { decoder?.stop(); decoder?.release() } catch (e: Exception) {}
+            try { encoder?.stop(); encoder?.release() } catch (e: Exception) {}
         }
     }
 
