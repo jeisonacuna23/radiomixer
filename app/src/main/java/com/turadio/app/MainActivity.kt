@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -126,6 +127,8 @@ fun AppRoot() {
                 context.dataStore.edit { it[stringPreferencesKey("APP_PIN")] = newPin }
                 savedPin = newPin
             }
+        }, onExit = {
+            activity.finishAffinity()
         })
     }
 }
@@ -170,7 +173,7 @@ fun formatTime(seconds: Long): String {
 }
 
 @Composable
-fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
+fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -205,6 +208,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAutoStopDialog by remember { mutableStateOf(false) }
+    var showExitDialog by remember { mutableStateOf(false) } // NUEVO ESTADO
     var tempMinutes by remember { mutableStateOf("") }
     var pinSetup by remember { mutableStateOf("") }
     var showPinSetup by remember { mutableStateOf(savedPin == null) }
@@ -313,10 +317,17 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                     "TRACK_DURATION_UPDATE" -> trackDuration = intent.getLongExtra("DURATION", 0L)
                     "TRACK_PROGRESS_UPDATE" -> trackElapsed = intent.getLongExtra("PROGRESS", 0L)
                     "RECORDING_UPDATE" -> isRecordingActive = intent.getBooleanExtra("IS_RECORDING", false)
+                    "ERROR_UPDATE" -> {
+                        mensajeEstado = "Error: ${intent.getStringExtra("ERROR_MSG")}"
+                        conectado = false
+                    }
                 }
             }
         }
-        val filter = IntentFilter().apply { addAction("SONG_UPDATE"); addAction("TIME_UPDATE"); addAction("TRACK_DURATION_UPDATE"); addAction("TRACK_PROGRESS_UPDATE"); addAction("RECORDING_UPDATE") }
+        val filter = IntentFilter().apply { 
+            addAction("SONG_UPDATE"); addAction("TIME_UPDATE"); addAction("TRACK_DURATION_UPDATE"); 
+            addAction("TRACK_PROGRESS_UPDATE"); addAction("RECORDING_UPDATE"); addAction("ERROR_UPDATE") 
+        }
         LocalBroadcastManager.getInstance(context).registerReceiver(receiver, filter)
         onDispose { LocalBroadcastManager.getInstance(context).unregisterReceiver(receiver) }
     }
@@ -413,6 +424,30 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
         )
     }
 
+    // DIALOGO DE CERRAR SESION
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitDialog = false },
+            title = { Text("Cerrar Sesión") },
+            text = { Text("¿Estás seguro de que quieres salir? Se detendrá la transmisión y se cerrará la app por completo.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExitDialog = false
+                    // 1. Detener la transmisión si está activa
+                    val stopIntent = Intent(context, StreamService::class.java).apply { action = "STOP" }
+                    context.startService(stopIntent)
+                    // 2. Detener el servicio por si acaso
+                    context.stopService(Intent(context, StreamService::class.java))
+                    // 3. Cerrar la app
+                    onExit()
+                }) { Text("Salir", color = Color.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitDialog = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(40.dp))
@@ -423,6 +458,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
             }
             IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = { showExitDialog = true }) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar Sesión", tint = MaterialTheme.colorScheme.error) }
         }
 
         if (!conectado) {
@@ -436,7 +472,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
             }
         }
 
-        Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium)
+        Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium, color = if (mensajeEstado.contains("Error")) Color.Red else TextDark)
         
         if (conectado) {
             Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
@@ -560,7 +596,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit) {
                 }
             }
 
-            // LA PLAYLIST AHORA SE MUESTRA SIEMPRE (Conectado o no)
             if (listaReproduccion.isNotEmpty()) {
                 Text("Lista de Reproducción:", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
                 LazyColumn(modifier = Modifier.heightIn(max = 250.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
