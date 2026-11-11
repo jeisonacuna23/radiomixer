@@ -315,7 +315,6 @@ class StreamService : Service() {
             
             LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("TRACK_DURATION_UPDATE").putExtra("DURATION", trackDurationSeconds))
             
-            // AQUI LLAMAMOS AL ESTANDARIZADOR
             enviarAudioEstandarizado(uriActual)
 
             index++
@@ -323,7 +322,6 @@ class StreamService : Service() {
         }
     }
 
-    // ESTANDARIZADOR: Decodifica, ajusta a 44100 Hz y recodifica a AAC 64kbps
     private fun enviarAudioEstandarizado(uri: Uri) {
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
@@ -347,14 +345,17 @@ class StreamService : Service() {
 
             val inputFormat = extractor.getTrackFormat(audioTrackIndex)
             val mime = inputFormat.getString(MediaFormat.KEY_MIME) ?: return
+            
+            // LEEMOS LA FRECUENCIA Y CANALES DEL ARCHIVO ORIGINAL
+            val inputSampleRate = inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val inputChannels = inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
 
-            // 1. Configurar Decodificador (Lee el archivo original)
             decoder = MediaCodec.createDecoderByType(mime)
             decoder.configure(inputFormat, null, null, 0)
             decoder.start()
 
-            // 2. Configurar Codificador (Lo estandariza a 44100 Hz)
-            val outputFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 44100, 2).apply {
+            // EL CODIFICADOR USA LA MISMA FRECUENCIA Y CANALES (Evita el efecto helio/lento)
+            val outputFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, inputSampleRate, inputChannels).apply {
                 setInteger(MediaFormat.KEY_BIT_RATE, 64000)
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 65536)
@@ -370,12 +371,10 @@ class StreamService : Service() {
             var isDecoderDone = false
             var isEncoderDone = false
 
-            var bytesEnviadosTotales = 0L
             val tiempoInicio = System.currentTimeMillis()
             var lastBroadcastedSecond = -1L
 
             while (isStreaming && isConnected && !isLiveMicActive && !isEncoderDone) {
-                // A. Alimentar Decodificador
                 if (!isInputDone) {
                     val inIndex = decoder.dequeueInputBuffer(10000)
                     if (inIndex >= 0) {
@@ -393,7 +392,6 @@ class StreamService : Service() {
                     }
                 }
 
-                // B. Decodificador -> Codificador
                 if (!isDecoderDone) {
                     val outIndex = decoder.dequeueOutputBuffer(decoderBufferInfo, 10000)
                     if (outIndex >= 0) {
@@ -417,7 +415,6 @@ class StreamService : Service() {
                     }
                 }
 
-                // C. Codificador -> Red
                 val encOutIndex = encoder.dequeueOutputBuffer(encoderBufferInfo, 10000)
                 if (encOutIndex >= 0) {
                     if (encoderBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
@@ -430,14 +427,13 @@ class StreamService : Service() {
                             outBuf.position(encoderBufferInfo.offset)
                             outBuf.get(aacData)
                             
-                            val adtsData = addAdtsHeader(aacData, 44100, 2)
+                            val adtsData = addAdtsHeader(aacData, inputSampleRate, inputChannels)
                             
                             if (isStreaming && isConnected) {
                                 shoutcastClient?.sendAudio(adtsData, adtsData.size)
                             }
-                            bytesEnviadosTotales += adtsData.size
                             
-                            val currentTrackSecond = bytesEnviadosTotales / 8000
+                            val currentTrackSecond = encoderBufferInfo.presentationTimeUs / 1_000_000L
                             if (currentTrackSecond > lastBroadcastedSecond) {
                                 lastBroadcastedSecond = currentTrackSecond
                                 LocalBroadcastManager.getInstance(this).sendBroadcast(
@@ -445,10 +441,11 @@ class StreamService : Service() {
                                 )
                             }
                             
-                            // CONTROL DE TIEMPO (PACING)
+                            // PACING CORREGIDO: Usa el tiempo real de presentación, no los bytes
                             val tiempoTranscurridoMs = System.currentTimeMillis() - tiempoInicio
-                            val tiempoQueDeberiaTardarMs = (bytesEnviadosTotales / 8000.0) * 1000.0
+                            val tiempoQueDeberiaTardarMs = encoderBufferInfo.presentationTimeUs / 1000.0
                             val tiempoEspera = tiempoQueDeberiaTardarMs - tiempoTranscurridoMs
+                            
                             if (tiempoEspera > 0) {
                                 val esperaReal = minOf(tiempoEspera.toLong(), 200L)
                                 Thread.sleep(esperaReal)
@@ -459,7 +456,6 @@ class StreamService : Service() {
                 }
             }
         } catch (e: Exception) {
-            // Si el archivo está dañado, ignoramos el error y pasamos a la siguiente canción
         } finally {
             try { extractor.release() } catch (e: Exception) {}
             try { decoder?.stop(); decoder?.release() } catch (e: Exception) {}
