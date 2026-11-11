@@ -54,11 +54,23 @@ class StreamService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "STOP") {
+            val shouldNotify = intent.getBooleanExtra("NOTIFY", true)
             isStreaming = false
             isRecording = false
-            notificarDesconexion()
+            if (shouldNotify) {
+                notificarDesconexion()
+            }
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        if (intent?.action == "TOGGLE_RECORDING") {
+            isRecording = intent.getBooleanExtra("RECORD_STATE", false)
+            if (!isRecording) {
+                try { outputStream?.flush(); outputStream?.close(); outputStream = null } catch (e: Exception) {}
+            }
+            LocalBroadcastManager.getInstance(this).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", isRecording))
+            return START_STICKY
         }
 
         if (intent?.action == "TOGGLE_LIVE_MIC") {
@@ -97,7 +109,7 @@ class StreamService : Service() {
         timeoutMinutes = intent?.getIntExtra("TIMEOUT_MINUTES", 0) ?: 0
         val uriList = intent?.getStringArrayListExtra("URIS") ?: emptyList()
         configModeMezcladora = intent?.getBooleanExtra("LINE_IN_MODE", false) ?: false
-        isRecording = intent?.getBooleanExtra("RECORD_STREAM", false) ?: false
+        isRecording = false // Inicia apagado por defecto
         configProgramName = intent?.getStringExtra("PROGRAM_NAME") ?: "Transmisión Especial"
         
         configUris = uriList.map { Uri.parse(it) }
@@ -217,32 +229,36 @@ class StreamService : Service() {
             mediaCodec?.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             mediaCodec?.start()
 
-            if (isRecording && outputStream == null) {
-                val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
-                val fileName = "Grabacion_$timestamp.aac"
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val values = ContentValues().apply {
-                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                            put(MediaStore.MediaColumns.MIME_TYPE, "audio/aac")
-                            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/A Voz en Cuello")
-                        }
-                        val uri = contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
-                        if (uri != null) outputStream = contentResolver.openOutputStream(uri)
-                    } else {
-                        val recordDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "A Voz en Cuello")
-                        if (!recordDir.exists()) recordDir.mkdirs()
-                        outputStream = FileOutputStream(File(recordDir, fileName))
-                    }
-                    LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", true))
-                } catch (e: Exception) { e.printStackTrace() }
-            }
-
             audioRecord?.startRecording()
             val bufferInfo = MediaCodec.BufferInfo()
 
             try {
                 while (isStreaming && isConnected && isLiveMicActive) {
+                    
+                    if (isRecording && outputStream == null) {
+                        val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
+                        val fileName = "Grabacion_$timestamp.aac"
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val values = ContentValues().apply {
+                                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                                    put(MediaStore.MediaColumns.MIME_TYPE, "audio/aac")
+                                    put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/A Voz en Cuello")
+                                }
+                                val uri = contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+                                if (uri != null) outputStream = contentResolver.openOutputStream(uri)
+                            } else {
+                                val recordDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "A Voz en Cuello")
+                                if (!recordDir.exists()) recordDir.mkdirs()
+                                outputStream = FileOutputStream(File(recordDir, fileName))
+                            }
+                            LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", true))
+                        } catch (e: Exception) { e.printStackTrace() }
+                    } else if (!isRecording && outputStream != null) {
+                        try { outputStream?.flush(); outputStream?.close(); outputStream = null } catch (e: Exception) {}
+                        LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
+                    }
+
                     val pcmBuffer = ByteArray(minBufSize)
                     val read = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
                     if (read > 0) {
@@ -262,7 +278,7 @@ class StreamService : Service() {
                             outputBuffer.position(bufferInfo.offset); outputBuffer.get(aacData)
                             val adtsData = addAdtsHeader(aacData, sampleRate, 2)
                             if (isStreaming && isConnected) shoutcastClient?.sendAudio(adtsData, adtsData.size)
-                            if (isRecording) { try { outputStream?.write(adtsData) } catch (e: Exception) {} }
+                            if (isRecording && outputStream != null) { try { outputStream?.write(adtsData) } catch (e: Exception) {} }
                         }
                         mediaCodec?.releaseOutputBuffer(outputIndex, false)
                         outputIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, 0) ?: -1
@@ -272,11 +288,8 @@ class StreamService : Service() {
             } finally {
                 try { audioRecord?.stop(); audioRecord?.release() } catch (e: Exception) {}
                 try { mediaCodec?.stop(); mediaCodec?.release() } catch (e: Exception) {}
-                if (!isLiveMicActive) {
-                    try { outputStream?.flush(); outputStream?.close(); outputStream = null } catch (e: Exception) {}
-                    isRecording = false
-                    LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
-                }
+                try { outputStream?.flush(); outputStream?.close(); outputStream = null } catch (e: Exception) {}
+                LocalBroadcastManager.getInstance(this@StreamService).sendBroadcast(Intent("RECORDING_UPDATE").putExtra("IS_RECORDING", false))
             }
         }
     }

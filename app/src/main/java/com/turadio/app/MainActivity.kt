@@ -90,11 +90,13 @@ fun AppRoot() {
 
     var isLocked by remember { mutableStateOf(true) }
     var savedPin by remember { mutableStateOf<String?>(null) }
+    var savedUser by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         val prefs = context.dataStore.data.first()
         savedPin = prefs[stringPreferencesKey("APP_PIN")]
+        savedUser = prefs[stringPreferencesKey("USER_NAME")] ?: ""
         isLoading = false
         if (savedPin == null) isLocked = false
     }
@@ -120,21 +122,30 @@ fun AppRoot() {
     if (isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     } else if (isLocked && savedPin != null) {
-        LockScreen(savedPin = savedPin!!, onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() })
+        LockScreen(savedPin = savedPin!!, savedUser = savedUser, onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() })
     } else {
-        PantallaPrincipal(savedPin = savedPin, onPinSet = { newPin ->
-            scope.launch {
-                context.dataStore.edit { it[stringPreferencesKey("APP_PIN")] = newPin }
-                savedPin = newPin
-            }
-        }, onExit = {
-            activity.finishAffinity()
-        })
+        PantallaPrincipal(
+            savedPin = savedPin, 
+            savedUser = savedUser,
+            onUserSet = { newUser ->
+                scope.launch {
+                    context.dataStore.edit { it[stringPreferencesKey("USER_NAME")] = newUser }
+                    savedUser = newUser
+                }
+            },
+            onPinSet = { newPin ->
+                scope.launch {
+                    context.dataStore.edit { it[stringPreferencesKey("APP_PIN")] = newPin }
+                    savedPin = newPin
+                }
+            }, 
+            onExit = { activity.finishAffinity() }
+        )
     }
 }
 
 @Composable
-fun LockScreen(savedPin: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
+fun LockScreen(savedPin: String, savedUser: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
     var pinInput by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -144,7 +155,7 @@ fun LockScreen(savedPin: String, onUnlock: () -> Unit, onBiometricClick: () -> U
     Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo A Voz en Cuello", modifier = Modifier.size(160.dp))
         Spacer(modifier = Modifier.height(24.dp))
-        Text("Ingrese su PIN", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
+        Text(if (savedUser.isNotEmpty()) "Hola, $savedUser" else "Ingrese su PIN", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
         Spacer(modifier = Modifier.height(16.dp))
         
         OutlinedTextField(
@@ -173,7 +184,7 @@ fun formatTime(seconds: Long): String {
 }
 
 @Composable
-fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () -> Unit) {
+fun PantallaPrincipal(savedPin: String?, savedUser: String, onUserSet: (String) -> Unit, onPinSet: (String) -> Unit, onExit: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -184,7 +195,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
     var nombrePrograma by remember { mutableStateOf("Programa en Vivo") }
     
     var modoMezcladora by remember { mutableStateOf(false) }
-    var grabarMezcladora by remember { mutableStateOf(false) }
     var isRecordingActive by remember { mutableStateOf(false) }
 
     var todosLosArchivos by remember { mutableStateOf<List<Pair<Uri, String>>>(emptyList()) }
@@ -208,10 +218,13 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAutoStopDialog by remember { mutableStateOf(false) }
-    var showExitDialog by remember { mutableStateOf(false) } // NUEVO ESTADO
+    var showExitDialog by remember { mutableStateOf(false) }
+    var showStopDialog by remember { mutableStateOf(false) } // MODAL DE DETENER
     var tempMinutes by remember { mutableStateOf("") }
-    var pinSetup by remember { mutableStateOf("") }
-    var showPinSetup by remember { mutableStateOf(savedPin == null) }
+    
+    var setupUser by remember { mutableStateOf("") }
+    var setupPin by remember { mutableStateOf("") }
+    var showSetup by remember { mutableStateOf(savedPin == null || savedUser.isEmpty()) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { }
 
@@ -241,7 +254,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
             val intent = Intent(context, StreamService::class.java).apply {
                 putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
                 putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
-                putExtra("LINE_IN_MODE", true); putExtra("RECORD_STREAM", grabarMezcladora)
+                putExtra("LINE_IN_MODE", true)
                 putExtra("PROGRAM_NAME", nombrePrograma)
             }
             context.startForegroundService(intent)
@@ -382,16 +395,19 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
         }
     }
 
-    if (showPinSetup) {
-        AlertDialog(onDismissRequest = { }, title = { Text("Configurar Seguridad") },
+    // DIALOGOS
+    if (showSetup) {
+        AlertDialog(onDismissRequest = { }, title = { Text("Configuración Inicial") },
             text = {
                 Column {
-                    Text("Cree un PIN de 4 dígitos para proteger la app.")
+                    Text("Cree su perfil de usuario y PIN de seguridad.")
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(value = pinSetup, onValueChange = { if (it.length <= 4) pinSetup = it }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), label = { Text("Nuevo PIN") })
+                    OutlinedTextField(value = setupUser, onValueChange = { setupUser = it }, label = { Text("Nombre de Usuario") }, modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(value = setupPin, onValueChange = { if (it.length <= 4) setupPin = it }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), label = { Text("PIN de 4 dígitos") })
                 }
             },
-            confirmButton = { TextButton(onClick = { if (pinSetup.length == 4) { onPinSet(pinSetup); showPinSetup = false } }) { Text("Guardar") } }
+            confirmButton = { TextButton(onClick = { if (setupPin.length == 4 && setupUser.isNotEmpty()) { onUserSet(setupUser); onPinSet(setupPin); showSetup = false } }) { Text("Guardar") } }
         )
     }
 
@@ -424,27 +440,46 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
         )
     }
 
-    // DIALOGO DE CERRAR SESION
+    if (showStopDialog) {
+        AlertDialog(
+            onDismissRequest = { showStopDialog = false },
+            title = { Text("Detener Transmisión") },
+            text = { Text("¿Estás seguro de que quieres detener la transmisión? Se avisará a los oyentes.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showStopDialog = false
+                    isRecordingActive = false
+                    val intent = Intent(context, StreamService::class.java).apply { 
+                        action = "STOP"
+                        putExtra("NOTIFY", true) 
+                    }
+                    context.startService(intent)
+                    conectado = false
+                    mensajeEstado = "Transmisión detenida."
+                }) { Text("Detener", color = Color.Red) }
+            },
+            dismissButton = { TextButton(onClick = { showStopDialog = false }) { Text("Cancelar") } }
+        )
+    }
+
     if (showExitDialog) {
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
             title = { Text("Cerrar Sesión") },
-            text = { Text("¿Estás seguro de que quieres salir? Se detendrá la transmisión y se cerrará la app por completo.") },
+            text = { Text("¿Estás seguro de que quieres salir? Se detendrá todo y se cerrará la app, sin avisar a los oyentes.") },
             confirmButton = {
                 TextButton(onClick = {
                     showExitDialog = false
-                    // 1. Detener la transmisión si está activa
-                    val stopIntent = Intent(context, StreamService::class.java).apply { action = "STOP" }
-                    context.startService(stopIntent)
-                    // 2. Detener el servicio por si acaso
+                    val intent = Intent(context, StreamService::class.java).apply { 
+                        action = "STOP"
+                        putExtra("NOTIFY", false) // SILENCIOSO
+                    }
+                    context.startService(intent)
                     context.stopService(Intent(context, StreamService::class.java))
-                    // 3. Cerrar la app
                     onExit()
                 }) { Text("Salir", color = Color.Red) }
             },
-            dismissButton = {
-                TextButton(onClick = { showExitDialog = false }) { Text("Cancelar") }
-            }
+            dismissButton = { TextButton(onClick = { showExitDialog = false }) { Text("Cancelar") } }
         )
     }
 
@@ -452,7 +487,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(40.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f))
+            Text(if(savedUser.isNotEmpty()) savedUser else "A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f))
             
             IconButton(onClick = { tempMinutes = minutosAutoStop; showAutoStopDialog = true }) {
                 Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
@@ -486,11 +521,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
                         Icon(Icons.Default.People, contentDescription = "Oyentes", modifier = Modifier.size(16.dp), tint = DarkPlum)
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("$oyentes", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = DarkPlum)
-
-                        if (isRecordingActive) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Icon(Icons.Default.FiberManualRecord, contentDescription = "Grabando", tint = Color.Red, modifier = Modifier.size(16.dp))
-                        }
                     }
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -541,6 +571,27 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
                             label = { Text("Nombre del programa (Firebase)") },
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         )
+                        
+                        // BOTÓN DE GRABAR EN VIVO
+                        Button(
+                            onClick = {
+                                val nuevoEstado = !isRecordingActive
+                                val intent = Intent(context, StreamService::class.java).apply {
+                                    action = "TOGGLE_RECORDING"
+                                    putExtra("RECORD_STATE", nuevoEstado)
+                                }
+                                context.startService(intent)
+                                isRecordingActive = nuevoEstado
+                            },
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isRecordingActive) Color.Red else MaterialTheme.colorScheme.secondary
+                            )
+                        ) {
+                            Icon(if (isRecordingActive) Icons.Default.Stop else Icons.Default.FiberManualRecord, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(if (isRecordingActive) "DETENER GRABACIÓN" else "GRABAR TRANSMISIÓN")
+                        }
                     }
 
                     Divider(modifier = Modifier.padding(vertical = 8.dp), color = Color.LightGray)
@@ -626,12 +677,6 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
                     Text("Conecta tu mezcladora al puerto de audio. La app transmitirá todo el sonido que entre por el cable.", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodySmall)
                     Spacer(modifier = Modifier.height(16.dp))
                     OutlinedTextField(value = nombrePrograma, onValueChange = { nombrePrograma = it }, label = { Text("Nombre del programa") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Switch(checked = grabarMezcladora, onCheckedChange = { grabarMezcladora = it }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = DarkPlum))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Grabar transmisión localmente", style = MaterialTheme.typography.bodyMedium)
-                    }
                 }
             }
         }
@@ -649,7 +694,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
                         val intent = Intent(context, StreamService::class.java).apply {
                             putExtra("IP", ip); putExtra("PORT", puerto.toIntOrNull() ?: 8017); putExtra("PASS", password)
                             putExtra("TIMEOUT_MINUTES", minutosAutoStop.toIntOrNull() ?: 0)
-                            putExtra("LINE_IN_MODE", true); putExtra("RECORD_STREAM", grabarMezcladora)
+                            putExtra("LINE_IN_MODE", true)
                             putExtra("PROGRAM_NAME", nombrePrograma)
                         }
                         context.startForegroundService(intent); conectado = true; mensajeEstado = "Transmitiendo Entrada de Línea..."
@@ -673,9 +718,7 @@ fun PantallaPrincipal(savedPin: String?, onPinSet: (String) -> Unit, onExit: () 
                     }
                 }
             } else {
-                isRecordingActive = false
-                val intent = Intent(context, StreamService::class.java).apply { action = "STOP" }
-                context.startService(intent); conectado = false; mensajeEstado = "Transmisión detenida."
+                showStopDialog = true // ABRE EL MODAL DE CONFIRMACION
             }
         }, modifier = Modifier.fillMaxWidth().height(60.dp), colors = ButtonDefaults.buttonColors(containerColor = if (conectado) MaterialTheme.colorScheme.error else DarkPlum)) {
             Icon(if (conectado) Icons.Default.Close else Icons.Default.PlayArrow, contentDescription = "Play/Stop")
