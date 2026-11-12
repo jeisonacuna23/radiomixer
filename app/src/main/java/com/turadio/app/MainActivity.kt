@@ -46,6 +46,9 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.FragmentActivity
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.auth.oauth2.GoogleCredentials
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.ktx.auth
+import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -87,22 +90,29 @@ fun AppRoot() {
     val context = LocalContext.current
     val activity = context as FragmentActivity
     val scope = rememberCoroutineScope()
+    val auth = remember { Firebase.auth }
 
     var isLocked by remember { mutableStateOf(true) }
-    var savedPin by remember { mutableStateOf<String?>(null) }
-    var savedUser by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(true) }
+    var currentUserEmail by remember { mutableStateOf("") }
+    var lastEmailUsed by remember { mutableStateOf("") } // RECUERDA EL CORREO
 
     LaunchedEffect(Unit) {
         val prefs = context.dataStore.data.first()
-        savedPin = prefs[stringPreferencesKey("APP_PIN")]
-        savedUser = prefs[stringPreferencesKey("USER_NAME")] ?: ""
+        lastEmailUsed = prefs[stringPreferencesKey("LAST_EMAIL")] ?: ""
+
+        val currentUser = auth.currentUser
+        if (currentUser != null) {
+            currentUserEmail = currentUser.email ?: ""
+            isLocked = true
+        } else {
+            isLocked = false
+        }
         isLoading = false
-        if (savedPin == null) isLocked = false
     }
 
     fun authenticateWithBiometrics() {
-        if (isLocked && savedPin != null) {
+        if (isLocked) {
             val biometricManager = BiometricManager.from(context)
             if (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS) {
                 val executor = ContextCompat.getMainExecutor(context)
@@ -113,7 +123,7 @@ fun AppRoot() {
                             isLocked = false
                         }
                     })
-                val promptInfo = BiometricPrompt.PromptInfo.Builder().setTitle("Desbloquear RadioMixer").setNegativeButtonText("Cancelar").build()
+                val promptInfo = BiometricPrompt.PromptInfo.Builder().setTitle("Desbloquear RadioMixer").setNegativeButtonText("Usar Contraseña").build()
                 biometricPrompt.authenticate(promptInfo)
             }
         }
@@ -121,33 +131,90 @@ fun AppRoot() {
 
     if (isLoading) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-    } else if (isLocked && savedPin != null) {
-        LockScreen(savedPin = savedPin!!, savedUser = savedUser, onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() })
+    } else if (!isLocked && auth.currentUser == null) {
+        LoginScreen(
+            auth = auth, 
+            initialEmail = lastEmailUsed, 
+            onLoginSuccess = { email ->
+                currentUserEmail = email
+                lastEmailUsed = email
+                isLocked = false
+                scope.launch { context.dataStore.edit { it[stringPreferencesKey("LAST_EMAIL")] = email } }
+            }
+        )
+    } else if (isLocked && auth.currentUser != null) {
+        LockScreen(email = currentUserEmail, onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() }, onLogout = {
+            auth.signOut()
+            isLocked = false
+            currentUserEmail = ""
+        })
     } else {
         PantallaPrincipal(
-            savedPin = savedPin, 
-            savedUser = savedUser,
-            onUserSet = { newUser ->
-                scope.launch {
-                    context.dataStore.edit { it[stringPreferencesKey("USER_NAME")] = newUser }
-                    savedUser = newUser
-                }
-            },
-            onPinSet = { newPin ->
-                scope.launch {
-                    context.dataStore.edit { it[stringPreferencesKey("APP_PIN")] = newPin }
-                    savedPin = newPin
-                }
-            }, 
-            onExit = { activity.finishAffinity() }
+            savedUser = currentUserEmail,
+            onExit = { 
+                auth.signOut()
+                activity.finishAffinity() 
+            }
         )
     }
 }
 
 @Composable
-fun LockScreen(savedPin: String, savedUser: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
-    var pinInput by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+fun LoginScreen(auth: FirebaseAuth, initialEmail: String, onLoginSuccess: (String) -> Unit) {
+    var email by remember { mutableStateOf(initialEmail) } // SE PRECARGA EL CORREO
+    var password by remember { mutableStateOf("") }
+    var isRegistering by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(120.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(if (isRegistering) "Crear Cuenta" else "Iniciar Sesión", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Correo Electrónico") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        
+        if (errorMsg.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(errorMsg, color = Color.Red, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(onClick = {
+            if (email.isBlank() || password.isBlank()) {
+                errorMsg = "Por favor, llene todos los campos."
+                return@Button
+            }
+            isLoading = true
+            if (isRegistering) {
+                auth.createUserWithEmailAndPassword(email, password).addOnCompleteListener { task ->
+                    isLoading = false
+                    if (task.isSuccessful) onLoginSuccess(email) else errorMsg = task.exception?.message ?: "Error al registrar"
+                }
+            } else {
+                auth.signInWithEmailAndPassword(email, password).addOnCompleteListener { task ->
+                    isLoading = false
+                    if (task.isSuccessful) onLoginSuccess(email) else errorMsg = task.exception?.message ?: "Error al iniciar sesión"
+                }
+            }
+        }, modifier = Modifier.fillMaxWidth().height(50.dp), enabled = !isLoading) {
+            if (isLoading) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+            else Text(if (isRegistering) "Registrarse" else "Ingresar")
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        TextButton(onClick = { isRegistering = !isRegistering; errorMsg = "" }) {
+            Text(if (isRegistering) "¿Ya tienes cuenta? Inicia sesión" else "¿No tienes cuenta? Regístrate", color = LightPlum)
+        }
+    }
+}
+
+@Composable
+fun LockScreen(email: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit, onLogout: () -> Unit) {
     val context = LocalContext.current
     val biometricManager = BiometricManager.from(context)
     val canUseBiometric = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
@@ -155,25 +222,19 @@ fun LockScreen(savedPin: String, savedUser: String, onUnlock: () -> Unit, onBiom
     Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo A Voz en Cuello", modifier = Modifier.size(160.dp))
         Spacer(modifier = Modifier.height(24.dp))
-        Text(if (savedUser.isNotEmpty()) "Hola, $savedUser" else "Ingrese su PIN", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        OutlinedTextField(
-            value = pinInput, onValueChange = { if (it.length <= 4) pinInput = it; error = false },
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            isError = error, label = { Text("PIN de 4 dígitos") }, modifier = Modifier.fillMaxWidth()
-        )
-        if (error) Text("PIN incorrecto", color = MaterialTheme.colorScheme.error)
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = { if (pinInput == savedPin) onUnlock() else error = true }, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("Desbloquear") }
-        Spacer(modifier = Modifier.height(16.dp))
+        Text("Bienvenido", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
+        Text(email, style = MaterialTheme.typography.bodyMedium, color = Color.Gray) // MUESTRA EL CORREO
+        Spacer(modifier = Modifier.height(32.dp))
         
         if (canUseBiometric) {
-            OutlinedButton(onClick = onBiometricClick, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkPlum)) {
-                Icon(Icons.Default.Fingerprint, contentDescription = "Huella"); Spacer(modifier = Modifier.width(8.dp)); Text("Usar Huella Dactilar")
+            Button(onClick = onBiometricClick, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+                Icon(Icons.Default.Fingerprint, contentDescription = "Huella"); Spacer(modifier = Modifier.width(8.dp)); Text("Entrar con Huella")
             }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+        
+        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)) {
+            Text("Cerrar Sesión de Firebase")
         }
     }
 }
@@ -184,7 +245,7 @@ fun formatTime(seconds: Long): String {
 }
 
 @Composable
-fun PantallaPrincipal(savedPin: String?, savedUser: String, onUserSet: (String) -> Unit, onPinSet: (String) -> Unit, onExit: () -> Unit) {
+fun PantallaPrincipal(savedUser: String, onExit: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -219,12 +280,8 @@ fun PantallaPrincipal(savedPin: String?, savedUser: String, onUserSet: (String) 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAutoStopDialog by remember { mutableStateOf(false) }
     var showExitDialog by remember { mutableStateOf(false) }
-    var showStopDialog by remember { mutableStateOf(false) } // MODAL DE DETENER
+    var showStopDialog by remember { mutableStateOf(false) }
     var tempMinutes by remember { mutableStateOf("") }
-    
-    var setupUser by remember { mutableStateOf("") }
-    var setupPin by remember { mutableStateOf("") }
-    var showSetup by remember { mutableStateOf(savedPin == null || savedUser.isEmpty()) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { }
 
@@ -395,22 +452,6 @@ fun PantallaPrincipal(savedPin: String?, savedUser: String, onUserSet: (String) 
         }
     }
 
-    // DIALOGOS
-    if (showSetup) {
-        AlertDialog(onDismissRequest = { }, title = { Text("Configuración Inicial") },
-            text = {
-                Column {
-                    Text("Cree su perfil de usuario y PIN de seguridad.")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(value = setupUser, onValueChange = { setupUser = it }, label = { Text("Nombre de Usuario") }, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(value = setupPin, onValueChange = { if (it.length <= 4) setupPin = it }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), label = { Text("PIN de 4 dígitos") })
-                }
-            },
-            confirmButton = { TextButton(onClick = { if (setupPin.length == 4 && setupUser.isNotEmpty()) { onUserSet(setupUser); onPinSet(setupPin); showSetup = false } }) { Text("Guardar") } }
-        )
-    }
-
     if (showSettingsDialog) {
         AlertDialog(onDismissRequest = { showSettingsDialog = false }, title = { Text("Ajustes de Red") },
             text = {
@@ -466,13 +507,13 @@ fun PantallaPrincipal(savedPin: String?, savedUser: String, onUserSet: (String) 
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
             title = { Text("Cerrar Sesión") },
-            text = { Text("¿Estás seguro de que quieres salir? Se detendrá todo y se cerrará la app, sin avisar a los oyentes.") },
+            text = { Text("¿Estás seguro de que quieres salir? Se detendrá todo, se cerrará la app y se cerrará tu sesión.") },
             confirmButton = {
                 TextButton(onClick = {
                     showExitDialog = false
                     val intent = Intent(context, StreamService::class.java).apply { 
                         action = "STOP"
-                        putExtra("NOTIFY", false) // SILENCIOSO
+                        putExtra("NOTIFY", false) 
                     }
                     context.startService(intent)
                     context.stopService(Intent(context, StreamService::class.java))
@@ -487,7 +528,7 @@ fun PantallaPrincipal(savedPin: String?, savedUser: String, onUserSet: (String) 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(40.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text(if(savedUser.isNotEmpty()) savedUser else "A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f))
+            Text(savedUser, style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f), maxLines = 1)
             
             IconButton(onClick = { tempMinutes = minutosAutoStop; showAutoStopDialog = true }) {
                 Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
@@ -572,7 +613,6 @@ fun PantallaPrincipal(savedPin: String?, savedUser: String, onUserSet: (String) 
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         )
                         
-                        // BOTÓN DE GRABAR EN VIVO
                         Button(
                             onClick = {
                                 val nuevoEstado = !isRecordingActive
@@ -718,7 +758,7 @@ fun PantallaPrincipal(savedPin: String?, savedUser: String, onUserSet: (String) 
                     }
                 }
             } else {
-                showStopDialog = true // ABRE EL MODAL DE CONFIRMACION
+                showStopDialog = true
             }
         }, modifier = Modifier.fillMaxWidth().height(60.dp), colors = ButtonDefaults.buttonColors(containerColor = if (conectado) MaterialTheme.colorScheme.error else DarkPlum)) {
             Icon(if (conectado) Icons.Default.Close else Icons.Default.PlayArrow, contentDescription = "Play/Stop")

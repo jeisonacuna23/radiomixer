@@ -109,7 +109,7 @@ class StreamService : Service() {
         timeoutMinutes = intent?.getIntExtra("TIMEOUT_MINUTES", 0) ?: 0
         val uriList = intent?.getStringArrayListExtra("URIS") ?: emptyList()
         configModeMezcladora = intent?.getBooleanExtra("LINE_IN_MODE", false) ?: false
-        isRecording = false // Inicia apagado por defecto
+        isRecording = false
         configProgramName = intent?.getStringExtra("PROGRAM_NAME") ?: "Transmisión Especial"
         
         configUris = uriList.map { Uri.parse(it) }
@@ -436,10 +436,12 @@ class StreamService : Service() {
         }
     }
 
+    // NOTIFICACION INAMOVIBLE
     private fun buildNotification(title: String, song: String): Notification {
         val builder = Notification.Builder(this, "RadioChannel")
             .setContentTitle("RadioMixer: $title")
             .setSmallIcon(android.R.drawable.ic_media_play)
+            .setOngoing(true) // ESTO IMPIDE QUE SE DESLICE
         if (song.isNotEmpty()) builder.setContentText(song) else builder.setContentText(title)
         return builder.build()
     }
