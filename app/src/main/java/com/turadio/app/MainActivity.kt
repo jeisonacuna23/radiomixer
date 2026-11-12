@@ -36,6 +36,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
@@ -95,7 +96,7 @@ fun AppRoot() {
     var isLocked by remember { mutableStateOf(true) }
     var isLoading by remember { mutableStateOf(true) }
     var currentUserEmail by remember { mutableStateOf("") }
-    var lastEmailUsed by remember { mutableStateOf("") } // RECUERDA EL CORREO
+    var lastEmailUsed by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         val prefs = context.dataStore.data.first()
@@ -161,11 +162,13 @@ fun AppRoot() {
 
 @Composable
 fun LoginScreen(auth: FirebaseAuth, initialEmail: String, onLoginSuccess: (String) -> Unit) {
-    var email by remember { mutableStateOf(initialEmail) } // SE PRECARGA EL CORREO
+    var email by remember { mutableStateOf(initialEmail) }
     var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var isRegistering by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
+    var passwordVisible by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -176,7 +179,33 @@ fun LoginScreen(auth: FirebaseAuth, initialEmail: String, onLoginSuccess: (Strin
         
         OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Correo Electrónico") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
         Spacer(modifier = Modifier.height(8.dp))
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Contraseña") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        
+        // CAMPO DE CONTRASEÑA CON OJITO
+        OutlinedTextField(
+            value = password, 
+            onValueChange = { password = it }, 
+            label = { Text("Contraseña") }, 
+            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(), 
+            modifier = Modifier.fillMaxWidth(),
+            trailingIcon = {
+                val image = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff
+                IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                    Icon(imageVector = image, contentDescription = "Ver contraseña")
+                }
+            }
+        )
+        
+        // CAMPO DE CONFIRMAR CONTRASEÑA (SOLO AL REGISTRARSE)
+        if (isRegistering) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = confirmPassword, 
+                onValueChange = { confirmPassword = it }, 
+                label = { Text("Confirmar Contraseña") }, 
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(), 
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         
         if (errorMsg.isNotEmpty()) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -189,7 +218,12 @@ fun LoginScreen(auth: FirebaseAuth, initialEmail: String, onLoginSuccess: (Strin
                 errorMsg = "Por favor, llene todos los campos."
                 return@Button
             }
+            if (isRegistering && password != confirmPassword) {
+                errorMsg = "Las contraseñas no coinciden."
+                return@Button
+            }
             isLoading = true
+            errorMsg = ""
             if (isRegistering) {
                 auth.createUserWithEmailAndPassword(email, password).addOnCompleteListener { task ->
                     isLoading = false
@@ -207,7 +241,11 @@ fun LoginScreen(auth: FirebaseAuth, initialEmail: String, onLoginSuccess: (Strin
         }
         
         Spacer(modifier = Modifier.height(16.dp))
-        TextButton(onClick = { isRegistering = !isRegistering; errorMsg = "" }) {
+        TextButton(onClick = { 
+            isRegistering = !isRegistering
+            errorMsg = ""
+            confirmPassword = ""
+        }) {
             Text(if (isRegistering) "¿Ya tienes cuenta? Inicia sesión" else "¿No tienes cuenta? Regístrate", color = LightPlum)
         }
     }
@@ -223,7 +261,7 @@ fun LockScreen(email: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit
         Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo A Voz en Cuello", modifier = Modifier.size(160.dp))
         Spacer(modifier = Modifier.height(24.dp))
         Text("Bienvenido", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
-        Text(email, style = MaterialTheme.typography.bodyMedium, color = Color.Gray) // MUESTRA EL CORREO
+        Text(email, style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
         Spacer(modifier = Modifier.height(32.dp))
         
         if (canUseBiometric) {
