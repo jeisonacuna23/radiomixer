@@ -12,8 +12,8 @@ android {
         applicationId = "com.turadio.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 32 // Versión 4.1
-        versionName = "4.1"
+        versionCode = 33 // Versión 4.2
+        versionName = "4.2"
     }
 
     signingConfigs {
@@ -76,10 +76,9 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.6.2")
     
-    // Firebase Auth (Email) y Mensajería
+    // Firebase Mensajería (Push) y Admin (Para el envío)
     implementation(platform("com.google.firebase:firebase-bom:32.7.2"))
     implementation("com.google.firebase:firebase-messaging")
-    implementation("com.google.firebase:firebase-auth")
     implementation("com.google.auth:google-auth-library-oauth2-http:1.20.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

@@ -36,7 +36,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
@@ -47,9 +46,6 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.FragmentActivity
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.auth.oauth2.GoogleCredentials
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.ktx.auth
-import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -90,27 +86,8 @@ class MainActivity : FragmentActivity() {
 fun AppRoot() {
     val context = LocalContext.current
     val activity = context as FragmentActivity
-    val scope = rememberCoroutineScope()
-    val auth = remember { Firebase.auth }
 
     var isLocked by remember { mutableStateOf(true) }
-    var isLoading by remember { mutableStateOf(true) }
-    var currentUserEmail by remember { mutableStateOf("") }
-    var lastEmailUsed by remember { mutableStateOf("") }
-
-    LaunchedEffect(Unit) {
-        val prefs = context.dataStore.data.first()
-        lastEmailUsed = prefs[stringPreferencesKey("LAST_EMAIL")] ?: ""
-
-        val currentUser = auth.currentUser
-        if (currentUser != null) {
-            currentUserEmail = currentUser.email ?: ""
-            isLocked = true
-        } else {
-            isLocked = false
-        }
-        isLoading = false
-    }
 
     fun authenticateWithBiometrics() {
         if (isLocked) {
@@ -124,135 +101,32 @@ fun AppRoot() {
                             isLocked = false
                         }
                     })
-                val promptInfo = BiometricPrompt.PromptInfo.Builder().setTitle("Desbloquear RadioMixer").setNegativeButtonText("Usar Contraseña").build()
+                val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("Desbloquear A Voz en Cuello")
+                    .setNegativeButtonText("Cancelar")
+                    .build()
                 biometricPrompt.authenticate(promptInfo)
-            }
-        }
-    }
-
-    if (isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-    } else if (!isLocked && auth.currentUser == null) {
-        LoginScreen(
-            auth = auth, 
-            initialEmail = lastEmailUsed, 
-            onLoginSuccess = { email ->
-                currentUserEmail = email
-                lastEmailUsed = email
-                isLocked = false
-                scope.launch { context.dataStore.edit { it[stringPreferencesKey("LAST_EMAIL")] = email } }
-            }
-        )
-    } else if (isLocked && auth.currentUser != null) {
-        LockScreen(email = currentUserEmail, onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() }, onLogout = {
-            auth.signOut()
-            isLocked = false
-            currentUserEmail = ""
-        })
-    } else {
-        PantallaPrincipal(
-            savedUser = currentUserEmail,
-            onExit = { 
-                auth.signOut()
-                activity.finishAffinity() 
-            }
-        )
-    }
-}
-
-@Composable
-fun LoginScreen(auth: FirebaseAuth, initialEmail: String, onLoginSuccess: (String) -> Unit) {
-    var email by remember { mutableStateOf(initialEmail) }
-    var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-    var isRegistering by remember { mutableStateOf(false) }
-    var errorMsg by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
-    var passwordVisible by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(120.dp))
-        Spacer(modifier = Modifier.height(24.dp))
-        Text(if (isRegistering) "Crear Cuenta" else "Iniciar Sesión", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Correo Electrónico") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        // CAMPO DE CONTRASEÑA CON OJITO
-        OutlinedTextField(
-            value = password, 
-            onValueChange = { password = it }, 
-            label = { Text("Contraseña") }, 
-            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(), 
-            modifier = Modifier.fillMaxWidth(),
-            trailingIcon = {
-                val image = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff
-                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Icon(imageVector = image, contentDescription = "Ver contraseña")
-                }
-            }
-        )
-        
-        // CAMPO DE CONFIRMAR CONTRASEÑA (SOLO AL REGISTRARSE)
-        if (isRegistering) {
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = confirmPassword, 
-                onValueChange = { confirmPassword = it }, 
-                label = { Text("Confirmar Contraseña") }, 
-                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(), 
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        
-        if (errorMsg.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(errorMsg, color = Color.Red, style = MaterialTheme.typography.bodySmall)
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = {
-            if (email.isBlank() || password.isBlank()) {
-                errorMsg = "Por favor, llene todos los campos."
-                return@Button
-            }
-            if (isRegistering && password != confirmPassword) {
-                errorMsg = "Las contraseñas no coinciden."
-                return@Button
-            }
-            isLoading = true
-            errorMsg = ""
-            if (isRegistering) {
-                auth.createUserWithEmailAndPassword(email, password).addOnCompleteListener { task ->
-                    isLoading = false
-                    if (task.isSuccessful) onLoginSuccess(email) else errorMsg = task.exception?.message ?: "Error al registrar"
-                }
             } else {
-                auth.signInWithEmailAndPassword(email, password).addOnCompleteListener { task ->
-                    isLoading = false
-                    if (task.isSuccessful) onLoginSuccess(email) else errorMsg = task.exception?.message ?: "Error al iniciar sesión"
-                }
+                // Si el teléfono no tiene huella configurada, entra directo
+                isLocked = false 
             }
-        }, modifier = Modifier.fillMaxWidth().height(50.dp), enabled = !isLoading) {
-            if (isLoading) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
-            else Text(if (isRegistering) "Registrarse" else "Ingresar")
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        TextButton(onClick = { 
-            isRegistering = !isRegistering
-            errorMsg = ""
-            confirmPassword = ""
-        }) {
-            Text(if (isRegistering) "¿Ya tienes cuenta? Inicia sesión" else "¿No tienes cuenta? Regístrate", color = LightPlum)
-        }
+    }
+
+    // Se lanza automáticamente al abrir la app
+    LaunchedEffect(Unit) {
+        authenticateWithBiometrics()
+    }
+
+    if (isLocked) {
+        LockScreen(onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() })
+    } else {
+        PantallaPrincipal(onExit = { activity.finishAffinity() })
     }
 }
 
 @Composable
-fun LockScreen(email: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit, onLogout: () -> Unit) {
+fun LockScreen(onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
     val context = LocalContext.current
     val biometricManager = BiometricManager.from(context)
     val canUseBiometric = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
@@ -260,19 +134,17 @@ fun LockScreen(email: String, onUnlock: () -> Unit, onBiometricClick: () -> Unit
     Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo A Voz en Cuello", modifier = Modifier.size(160.dp))
         Spacer(modifier = Modifier.height(24.dp))
-        Text("Bienvenido", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
-        Text(email, style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+        Text("A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
         Spacer(modifier = Modifier.height(32.dp))
         
         if (canUseBiometric) {
             Button(onClick = onBiometricClick, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                Icon(Icons.Default.Fingerprint, contentDescription = "Huella"); Spacer(modifier = Modifier.width(8.dp)); Text("Entrar con Huella")
+                Icon(Icons.Default.Fingerprint, contentDescription = "Huella"); Spacer(modifier = Modifier.width(8.dp)); Text("Desbloquear con Huella")
             }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-        
-        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)) {
-            Text("Cerrar Sesión de Firebase")
+        } else {
+            Button(onClick = onUnlock, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+                Text("Entrar")
+            }
         }
     }
 }
@@ -283,7 +155,7 @@ fun formatTime(seconds: Long): String {
 }
 
 @Composable
-fun PantallaPrincipal(savedUser: String, onExit: () -> Unit) {
+fun PantallaPrincipal(onExit: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -544,8 +416,8 @@ fun PantallaPrincipal(savedUser: String, onExit: () -> Unit) {
     if (showExitDialog) {
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
-            title = { Text("Cerrar Sesión") },
-            text = { Text("¿Estás seguro de que quieres salir? Se detendrá todo, se cerrará la app y se cerrará tu sesión.") },
+            title = { Text("Cerrar Aplicación") },
+            text = { Text("¿Estás seguro de que quieres salir? Se detendrá todo y se cerrará la app.") },
             confirmButton = {
                 TextButton(onClick = {
                     showExitDialog = false
@@ -566,13 +438,13 @@ fun PantallaPrincipal(savedUser: String, onExit: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(40.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text(savedUser, style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f), maxLines = 1)
+            Text("A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f), maxLines = 1)
             
             IconButton(onClick = { tempMinutes = minutosAutoStop; showAutoStopDialog = true }) {
                 Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
             }
             IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary) }
-            IconButton(onClick = { showExitDialog = true }) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar Sesión", tint = MaterialTheme.colorScheme.error) }
+            IconButton(onClick = { showExitDialog = true }) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar App", tint = MaterialTheme.colorScheme.error) }
         }
 
         if (!conectado) {
