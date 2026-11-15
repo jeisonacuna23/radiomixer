@@ -32,7 +32,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -438,16 +440,20 @@ fun PantallaPrincipal(onExit: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        
+        // BARRA SUPERIOR: ICONOS SOLO SI NO ESTA CONECTADO
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(40.dp))
             Spacer(modifier = Modifier.width(8.dp))
             Text("A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum, modifier = Modifier.weight(1f), maxLines = 1)
             
-            IconButton(onClick = { tempMinutes = minutosAutoStop; showAutoStopDialog = true }) {
-                Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+            if (!conectado) {
+                IconButton(onClick = { tempMinutes = minutosAutoStop; showAutoStopDialog = true }) {
+                    Icon(Icons.Default.Timer, contentDescription = "Auto-Stop", tint = if (minutosAutoStop.isNotEmpty() && minutosAutoStop != "0") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                }
+                IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary) }
+                IconButton(onClick = { showExitDialog = true }) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar App", tint = MaterialTheme.colorScheme.error) }
             }
-            IconButton(onClick = { showSettingsDialog = true }) { Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = MaterialTheme.colorScheme.primary) }
-            IconButton(onClick = { showExitDialog = true }) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar App", tint = MaterialTheme.colorScheme.error) }
         }
 
         if (!conectado) {
@@ -464,12 +470,12 @@ fun PantallaPrincipal(onExit: () -> Unit) {
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium, color = if (mensajeEstado.contains("Error")) Color.Red else TextDark)
         
         if (conectado) {
-            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(4.dp)) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.PlayArrow, contentDescription = "En vivo", tint = MaterialTheme.colorScheme.error)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+                        Text("EN VIVO", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         
                         Spacer(modifier = Modifier.weight(1f))
                         Icon(Icons.Default.People, contentDescription = "Oyentes", modifier = Modifier.size(16.dp), tint = DarkPlum)
@@ -477,7 +483,7 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                         Text("$oyentes", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = DarkPlum)
                     }
                     
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                         Switch(
                             checked = isLiveMicUi, 
@@ -547,31 +553,47 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                         }
                     }
 
-                    Divider(modifier = Modifier.padding(vertical = 8.dp), color = Color.LightGray)
-                    Text("Sonando: $cancionActual", style = MaterialTheme.typography.bodyLarge, color = TextDark)
+                    Divider(modifier = Modifier.padding(vertical = 12.dp), color = Color.LightGray)
+                    
+                    Text("Sonando ahora:", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                    Text("$cancionActual", style = MaterialTheme.typography.titleMedium, color = DarkPlum, fontWeight = FontWeight.Bold, maxLines = 1)
                     
                     if (!isLiveMicUi) {
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
                         if (trackDuration > 0) {
-                            LinearProgressIndicator(progress = { trackElapsed.toFloat() / trackDuration.toFloat() }, modifier = Modifier.fillMaxWidth(), color = DarkPlum)
-                            Spacer(modifier = Modifier.height(4.dp))
+                            // BARRA DE PROGRESO ESTILIZADA
+                            LinearProgressIndicator(
+                                progress = { trackElapsed.toFloat() / trackDuration.toFloat() },
+                                modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)),
+                                color = DarkPlum,
+                                trackColor = Color.LightGray.copy(alpha = 0.4f),
+                                strokeCap = StrokeCap.Round
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
-                                Text(formatTime(trackDuration), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+                                Text(formatTime(trackElapsed), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace, color = DarkPlum)
+                                Text(formatTime(trackDuration), style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace, color = DarkPlum)
                             }
-                        } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = DarkPlum)
+                        } else {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)),
+                                color = DarkPlum,
+                                trackColor = Color.LightGray.copy(alpha = 0.4f),
+                                strokeCap = StrokeCap.Round
+                            )
+                        }
                     }
 
-                    Divider(modifier = Modifier.padding(vertical = 8.dp), color = Color.LightGray)
+                    Divider(modifier = Modifier.padding(vertical = 12.dp), color = Color.LightGray)
                     
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column {
-                            Text("Tiempo al aire:", style = MaterialTheme.typography.labelMedium)
-                            Text(tiempoAlAire, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = TextDark)
+                            Text("Tiempo al aire:", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                            Text(tiempoAlAire, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = TextDark, fontWeight = FontWeight.Bold)
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("Restante Auto-Stop:", style = MaterialTheme.typography.labelMedium)
-                            Text(tiempoRestante, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = DarkPlum)
+                            Text("Restante Auto-Stop:", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                            Text(tiempoRestante, style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace, color = DarkPlum, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -583,45 +605,47 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                 Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = LightPlum)) {
                     Icon(Icons.Default.Folder, contentDescription = "Carpeta"); Spacer(modifier = Modifier.width(8.dp)); Text("Seleccionar Carpeta de Música")
                 }
-            } else if (!conectado) {
-                
-                // NUEVAS PESTAÑAS VISUALES
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = { selectedTab = 1 },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (selectedTab == 1) DarkPlum else Color.Transparent,
-                            contentColor = if (selectedTab == 1) Color.White else Color.Gray
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        border = if (selectedTab != 1) androidx.compose.foundation.BorderStroke(1.dp, Color.LightGray) else null
+            } else {
+                if (!conectado) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.QueueMusic, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Playlist", fontWeight = FontWeight.Bold)
+                        Button(
+                            onClick = { selectedTab = 1 },
+                            modifier = Modifier.weight(1f).height(50.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selectedTab == 1) DarkPlum else Color.Transparent,
+                                contentColor = if (selectedTab == 1) Color.White else Color.Gray
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            border = if (selectedTab != 1) androidx.compose.foundation.BorderStroke(1.dp, Color.LightGray) else null
+                        ) {
+                            Icon(Icons.Default.QueueMusic, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Playlist", fontWeight = FontWeight.Bold)
+                        }
+                        
+                        Button(
+                            onClick = { selectedTab = 0 },
+                            modifier = Modifier.weight(1f).height(50.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selectedTab == 0) DarkPlum else Color.Transparent,
+                                contentColor = if (selectedTab == 0) Color.White else Color.Gray
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            border = if (selectedTab != 0) androidx.compose.foundation.BorderStroke(1.dp, Color.LightGray) else null
+                        ) {
+                            Icon(Icons.Default.LibraryMusic, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Catálogo", fontWeight = FontWeight.Bold)
+                        }
                     }
-                    
-                    Button(
-                        onClick = { selectedTab = 0 },
-                        modifier = Modifier.weight(1f).height(50.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (selectedTab == 0) DarkPlum else Color.Transparent,
-                            contentColor = if (selectedTab == 0) Color.White else Color.Gray
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        border = if (selectedTab != 0) androidx.compose.foundation.BorderStroke(1.dp, Color.LightGray) else null
-                    ) {
-                        Icon(Icons.Default.LibraryMusic, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Catálogo", fontWeight = FontWeight.Bold)
-                    }
+                } else {
+                    Text("Lista de reproducción:", style = MaterialTheme.typography.titleMedium, color = DarkPlum, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
                 }
 
-                if (selectedTab == 0) {
+                if (selectedTab == 0 && !conectado) {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
@@ -656,14 +680,17 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                         }
                     }
                 } else {
+                    // PLAYLIST
                     val lazyListState = rememberLazyListState()
                     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-                        val newList = listaReproduccion.toMutableList()
-                        newList.add(to.index, newList.removeAt(from.index))
-                        listaReproduccion = newList
+                        if (!conectado) {
+                            val newList = listaReproduccion.toMutableList()
+                            newList.add(to.index, newList.removeAt(from.index))
+                            listaReproduccion = newList
+                        }
                     }
 
-                    LazyColumn(state = lazyListState, modifier = Modifier.heightIn(max = 350.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LazyColumn(state = lazyListState, modifier = Modifier.heightIn(max = if (conectado) 350.dp else 400.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         itemsIndexed(listaReproduccion, key = { _, item -> item.first }) { index, cancion ->
                             ReorderableItem(reorderableState, key = cancion.first) { isDragging ->
                                 val elevation = if (isDragging) 8.dp else 1.dp
@@ -673,23 +700,39 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                                 val cardBg = if (isPlaying) HighlightBg else Color.White
 
                                 Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(elevation), colors = CardDefaults.cardColors(containerColor = cardBg)) {
-                                    Row(modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                        
-                                        IconButton(modifier = Modifier.draggableHandle(), onClick = {}) {
-                                            Icon(Icons.Default.DragHandle, contentDescription = "Mover")
-                                        }
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Row(modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                            
+                                            if (!conectado) {
+                                                IconButton(modifier = Modifier.draggableHandle(), onClick = {}) {
+                                                    Icon(Icons.Default.DragHandle, contentDescription = "Mover")
+                                                }
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                            } else {
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                            }
 
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = cancion.second, 
-                                            modifier = Modifier.weight(1f), 
-                                            maxLines = 1,
-                                            fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isPlaying) DarkPlum else TextDark
-                                        )
-                                        if (isPlaying) {
-                                            Icon(Icons.Default.VolumeUp, contentDescription = "Sonando", tint = DarkPlum, modifier = Modifier.size(20.dp))
-                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = cancion.second, 
+                                                modifier = Modifier.weight(1f), 
+                                                maxLines = 1,
+                                                fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isPlaying) DarkPlum else TextDark
+                                            )
+                                            if (isPlaying) {
+                                                Icon(Icons.Default.VolumeUp, contentDescription = "Sonando", tint = DarkPlum, modifier = Modifier.size(20.dp))
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                            }
+                                        }
+                                        
+                                        // PROGRESO MINI EN LA LISTA SI ESTA SONANDO
+                                        if (isPlaying && trackDuration > 0) {
+                                            LinearProgressIndicator(
+                                                progress = { trackElapsed.toFloat() / trackDuration.toFloat() },
+                                                modifier = Modifier.fillMaxWidth().height(4.dp),
+                                                color = DarkPlum,
+                                                trackColor = Color.LightGray.copy(alpha = 0.3f)
+                                            )
                                         }
                                     }
                                 }
