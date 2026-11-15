@@ -22,13 +22,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,8 +39,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp // <--- ESTA ERA LA IMPORTACIÓN QUE FALTABA
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -117,8 +118,6 @@ fun AppRoot() {
         }
     }
 
-    LaunchedEffect(Unit) { authenticateWithBiometrics() }
-
     if (isLocked) {
         LockScreen(onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() })
     } else {
@@ -132,18 +131,31 @@ fun LockScreen(onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
     val biometricManager = BiometricManager.from(context)
     val canUseBiometric = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
 
-    Column(modifier = Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo A Voz en Cuello", modifier = Modifier.size(160.dp))
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("A Voz en Cuello", style = MaterialTheme.typography.titleLarge, color = DarkPlum)
+    Column(
+        modifier = Modifier.fillMaxSize().padding(32.dp), 
+        horizontalAlignment = Alignment.CenterHorizontally, 
+        verticalArrangement = Arrangement.Center
+    ) {
+        Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo A Voz en Cuello", modifier = Modifier.size(200.dp))
         Spacer(modifier = Modifier.height(32.dp))
         
+        Text("Bienvenido a", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
+        Text("A Voz en Cuello", style = MaterialTheme.typography.headlineLarge, color = DarkPlum, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        
+        Spacer(modifier = Modifier.height(48.dp))
+        
         if (canUseBiometric) {
-            Button(onClick = onBiometricClick, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                Icon(Icons.Default.Fingerprint, contentDescription = "Huella"); Spacer(modifier = Modifier.width(8.dp)); Text("Desbloquear con Huella")
+            Button(onClick = onBiometricClick, modifier = Modifier.fillMaxWidth().height(60.dp), shape = RoundedCornerShape(12.dp)) {
+                Icon(Icons.Default.Fingerprint, contentDescription = "Huella", modifier = Modifier.size(28.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Text("Desbloquear con Huella", fontSize = 18.sp)
             }
         } else {
-            Button(onClick = onUnlock, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("Entrar") }
+            Button(onClick = onUnlock, modifier = Modifier.fillMaxWidth().height(60.dp), shape = RoundedCornerShape(12.dp)) {
+                Icon(Icons.Default.Login, contentDescription = "Entrar", modifier = Modifier.size(28.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Text("Entrar a la App", fontSize = 18.sp)
+            }
         }
     }
 }
@@ -440,10 +452,10 @@ fun PantallaPrincipal(onExit: () -> Unit) {
 
         if (!conectado) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { modoMezcladora = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, contentColor = if (!modoMezcladora) Color.White else Color.Gray)) {
+                Button(onClick = { modoMezcladora = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, contentColor = if (!modoMezcladora) Color.White else Color.Gray), shape = RoundedCornerShape(8.dp)) {
                     Icon(Icons.Default.MusicNote, contentDescription = null); Spacer(modifier = Modifier.width(4.dp)); Text("Auto-DJ")
                 }
-                Button(onClick = { modoMezcladora = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, contentColor = if (modoMezcladora) Color.White else Color.Gray)) {
+                Button(onClick = { modoMezcladora = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, contentColor = if (modoMezcladora) Color.White else Color.Gray), shape = RoundedCornerShape(8.dp)) {
                     Icon(Icons.Default.SettingsInputComponent, contentDescription = null); Spacer(modifier = Modifier.width(4.dp)); Text("Mezcladora")
                 }
             }
@@ -572,11 +584,41 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                     Icon(Icons.Default.Folder, contentDescription = "Carpeta"); Spacer(modifier = Modifier.width(8.dp)); Text("Seleccionar Carpeta de Música")
                 }
             } else if (!conectado) {
-                TabRow(selectedTabIndex = selectedTab, containerColor = Color.Transparent, contentColor = DarkPlum, indicator = { tabPositions ->
-                    TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(tabPositions[selectedTab]), color = DarkPlum)
-                }) {
-                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Mi Playlist (${listaReproduccion.size})", fontWeight = FontWeight.Bold) })
-                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Catálogo (${todosLosArchivos.size})") })
+                
+                // NUEVAS PESTAÑAS VISUALES
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { selectedTab = 1 },
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selectedTab == 1) DarkPlum else Color.Transparent,
+                            contentColor = if (selectedTab == 1) Color.White else Color.Gray
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        border = if (selectedTab != 1) androidx.compose.foundation.BorderStroke(1.dp, Color.LightGray) else null
+                    ) {
+                        Icon(Icons.Default.QueueMusic, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Playlist", fontWeight = FontWeight.Bold)
+                    }
+                    
+                    Button(
+                        onClick = { selectedTab = 0 },
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selectedTab == 0) DarkPlum else Color.Transparent,
+                            contentColor = if (selectedTab == 0) Color.White else Color.Gray
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        border = if (selectedTab != 0) androidx.compose.foundation.BorderStroke(1.dp, Color.LightGray) else null
+                    ) {
+                        Icon(Icons.Default.LibraryMusic, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Catálogo", fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 if (selectedTab == 0) {
