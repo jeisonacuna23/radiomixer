@@ -16,15 +16,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -35,7 +32,6 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -44,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp // <--- ESTA ERA LA IMPORTACIÓN QUE FALTABA
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -72,7 +69,7 @@ val LightPlum = Color(0xFF7B2C7E)
 val AccentPink = Color(0xFFD65DB1)
 val BgLight = Color(0xFFFDF7FF)
 val TextDark = Color(0xFF2C082F)
-val HighlightBg = Color(0xFFF3E5F5) // Color para canción sonando
+val HighlightBg = Color(0xFFF3E5F5)
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -201,8 +198,7 @@ fun PantallaPrincipal(onExit: () -> Unit) {
     var showStopDialog by remember { mutableStateOf(false) }
     var tempMinutes by remember { mutableStateOf("") }
 
-    // ESTADOS PARA LAS PESTAÑAS Y BUSQUEDA
-    var selectedTab by remember { mutableIntStateOf(1) } // 0 = Catalogo, 1 = Playlist
+    var selectedTab by remember { mutableIntStateOf(1) }
     var searchQuery by remember { mutableStateOf("") }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { }
@@ -430,7 +426,6 @@ fun PantallaPrincipal(onExit: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // BARRA SUPERIOR
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(40.dp))
             Spacer(modifier = Modifier.width(8.dp))
@@ -443,7 +438,6 @@ fun PantallaPrincipal(onExit: () -> Unit) {
             IconButton(onClick = { showExitDialog = true }) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar App", tint = MaterialTheme.colorScheme.error) }
         }
 
-        // SELECTOR DE MODO
         if (!conectado) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { modoMezcladora = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, contentColor = if (!modoMezcladora) Color.White else Color.Gray)) {
@@ -457,7 +451,6 @@ fun PantallaPrincipal(onExit: () -> Unit) {
 
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium, color = if (mensajeEstado.contains("Error")) Color.Red else TextDark)
         
-        // TARJETA EN VIVO
         if (conectado) {
             Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -573,14 +566,12 @@ fun PantallaPrincipal(onExit: () -> Unit) {
             }
         }
 
-        // CATALOGO Y PLAYLIST
         if (!modoMezcladora) {
             if (!conectado && todosLosArchivos.isEmpty()) {
                 Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = LightPlum)) {
                     Icon(Icons.Default.Folder, contentDescription = "Carpeta"); Spacer(modifier = Modifier.width(8.dp)); Text("Seleccionar Carpeta de Música")
                 }
             } else if (!conectado) {
-                // SELECTOR DE PESTAÑAS
                 TabRow(selectedTabIndex = selectedTab, containerColor = Color.Transparent, contentColor = DarkPlum, indicator = { tabPositions ->
                     TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(tabPositions[selectedTab]), color = DarkPlum)
                 }) {
@@ -589,7 +580,6 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                 }
 
                 if (selectedTab == 0) {
-                    // VISTA CATALOGO (Con buscador y seleccionar todo)
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
@@ -624,7 +614,6 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                         }
                     }
                 } else {
-                    // VISTA PLAYLIST (Con Arrastrar y Soltar)
                     val lazyListState = rememberLazyListState()
                     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
                         val newList = listaReproduccion.toMutableList()
@@ -637,7 +626,6 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                             ReorderableItem(reorderableState, key = cancion.first) { isDragging ->
                                 val elevation = if (isDragging) 8.dp else 1.dp
                                 
-                                // RESALTAR CANCION SONANDO
                                 val nombreLimpio = cleanFileName(cancion.second)
                                 val isPlaying = conectado && !isLiveMicUi && (cancionActual.contains(nombreLimpio, ignoreCase = true) || nombreLimpio.contains(cancionActual, ignoreCase = true))
                                 val cardBg = if (isPlaying) HighlightBg else Color.White
