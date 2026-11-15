@@ -16,24 +16,31 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -55,6 +62,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 val Context.dataStore by preferencesDataStore(name = "settings")
 
@@ -63,6 +72,7 @@ val LightPlum = Color(0xFF7B2C7E)
 val AccentPink = Color(0xFFD65DB1)
 val BgLight = Color(0xFFFDF7FF)
 val TextDark = Color(0xFF2C082F)
+val HighlightBg = Color(0xFFF3E5F5) // Color para canción sonando
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,6 +96,7 @@ class MainActivity : FragmentActivity() {
 fun AppRoot() {
     val context = LocalContext.current
     val activity = context as FragmentActivity
+    val scope = rememberCoroutineScope()
 
     var isLocked by remember { mutableStateOf(true) }
 
@@ -101,22 +112,15 @@ fun AppRoot() {
                             isLocked = false
                         }
                     })
-                val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Desbloquear A Voz en Cuello")
-                    .setNegativeButtonText("Cancelar")
-                    .build()
+                val promptInfo = BiometricPrompt.PromptInfo.Builder().setTitle("Desbloquear A Voz en Cuello").setNegativeButtonText("Cancelar").build()
                 biometricPrompt.authenticate(promptInfo)
             } else {
-                // Si el teléfono no tiene huella configurada, entra directo
                 isLocked = false 
             }
         }
     }
 
-    // Se lanza automáticamente al abrir la app
-    LaunchedEffect(Unit) {
-        authenticateWithBiometrics()
-    }
+    LaunchedEffect(Unit) { authenticateWithBiometrics() }
 
     if (isLocked) {
         LockScreen(onUnlock = { isLocked = false }, onBiometricClick = { authenticateWithBiometrics() })
@@ -142,9 +146,7 @@ fun LockScreen(onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
                 Icon(Icons.Default.Fingerprint, contentDescription = "Huella"); Spacer(modifier = Modifier.width(8.dp)); Text("Desbloquear con Huella")
             }
         } else {
-            Button(onClick = onUnlock, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                Text("Entrar")
-            }
+            Button(onClick = onUnlock, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text("Entrar") }
         }
     }
 }
@@ -152,6 +154,12 @@ fun LockScreen(onUnlock: () -> Unit, onBiometricClick: () -> Unit) {
 fun formatTime(seconds: Long): String {
     val h = seconds / 3600; val m = (seconds % 3600) / 60; val s = seconds % 60
     return if (h > 0) String.format("%02d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
+}
+
+fun cleanFileName(rawName: String): String {
+    var name = rawName.replace(Regex("\\.(mp3|aac|m4a|wav|ogg)$", RegexOption.IGNORE_CASE), "")
+    name = name.replace(Regex("^[0-9\\s\\-_.]+"), "")
+    return name.replace("_", " ").trim()
 }
 
 @Composable
@@ -192,6 +200,10 @@ fun PantallaPrincipal(onExit: () -> Unit) {
     var showExitDialog by remember { mutableStateOf(false) }
     var showStopDialog by remember { mutableStateOf(false) }
     var tempMinutes by remember { mutableStateOf("") }
+
+    // ESTADOS PARA LAS PESTAÑAS Y BUSQUEDA
+    var selectedTab by remember { mutableIntStateOf(1) } // 0 = Catalogo, 1 = Playlist
+    var searchQuery by remember { mutableStateOf("") }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { }
 
@@ -329,20 +341,9 @@ fun PantallaPrincipal(onExit: () -> Unit) {
         scope.launch { context.dataStore.edit { settings -> settings[stringSetPreferencesKey("PLAYLIST_URIS")] = listaReproduccion.map { it.first.toString() }.toSet() } }
     }
 
-    fun moverArriba(index: Int) {
-        if (index > 0) {
-            val nuevaLista = listaReproduccion.toMutableList()
-            nuevaLista.add(index - 1, nuevaLista.removeAt(index))
-            listaReproduccion = nuevaLista
-        }
-    }
-
-    fun moverAbajo(index: Int) {
-        if (index < listaReproduccion.size - 1) {
-            val nuevaLista = listaReproduccion.toMutableList()
-            nuevaLista.add(index + 1, nuevaLista.removeAt(index))
-            listaReproduccion = nuevaLista
-        }
+    fun savePlaylist(newList: List<Pair<Uri, String>>) {
+        listaReproduccion = newList
+        scope.launch { context.dataStore.edit { settings -> settings[stringSetPreferencesKey("PLAYLIST_URIS")] = newList.map { it.first.toString() }.toSet() } }
     }
 
     fun enviarNotificacionFirebase() {
@@ -400,10 +401,7 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                 TextButton(onClick = {
                     showStopDialog = false
                     isRecordingActive = false
-                    val intent = Intent(context, StreamService::class.java).apply { 
-                        action = "STOP"
-                        putExtra("NOTIFY", true) 
-                    }
+                    val intent = Intent(context, StreamService::class.java).apply { action = "STOP"; putExtra("NOTIFY", true) }
                     context.startService(intent)
                     conectado = false
                     mensajeEstado = "Transmisión detenida."
@@ -421,10 +419,7 @@ fun PantallaPrincipal(onExit: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     showExitDialog = false
-                    val intent = Intent(context, StreamService::class.java).apply { 
-                        action = "STOP"
-                        putExtra("NOTIFY", false) 
-                    }
+                    val intent = Intent(context, StreamService::class.java).apply { action = "STOP"; putExtra("NOTIFY", false) }
                     context.startService(intent)
                     context.stopService(Intent(context, StreamService::class.java))
                     onExit()
@@ -435,6 +430,7 @@ fun PantallaPrincipal(onExit: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // BARRA SUPERIOR
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Image(painter = painterResource(id = R.drawable.logo_new), contentDescription = "Logo", modifier = Modifier.size(40.dp))
             Spacer(modifier = Modifier.width(8.dp))
@@ -447,6 +443,7 @@ fun PantallaPrincipal(onExit: () -> Unit) {
             IconButton(onClick = { showExitDialog = true }) { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Cerrar App", tint = MaterialTheme.colorScheme.error) }
         }
 
+        // SELECTOR DE MODO
         if (!conectado) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { modoMezcladora = false }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (!modoMezcladora) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, contentColor = if (!modoMezcladora) Color.White else Color.Gray)) {
@@ -460,6 +457,7 @@ fun PantallaPrincipal(onExit: () -> Unit) {
 
         Text(text = mensajeEstado, style = MaterialTheme.typography.bodyMedium, color = if (mensajeEstado.contains("Error")) Color.Red else TextDark)
         
+        // TARJETA EN VIVO
         if (conectado) {
             Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -471,7 +469,7 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                         Spacer(modifier = Modifier.weight(1f))
                         Icon(Icons.Default.People, contentDescription = "Oyentes", modifier = Modifier.size(16.dp), tint = DarkPlum)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("$oyentes", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = DarkPlum)
+                        Text("$oyentes", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = DarkPlum)
                     }
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -575,16 +573,47 @@ fun PantallaPrincipal(onExit: () -> Unit) {
             }
         }
 
+        // CATALOGO Y PLAYLIST
         if (!modoMezcladora) {
-            if (!conectado) {
+            if (!conectado && todosLosArchivos.isEmpty()) {
                 Button(onClick = { selectorCarpeta.launch(null) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = LightPlum)) {
                     Icon(Icons.Default.Folder, contentDescription = "Carpeta"); Spacer(modifier = Modifier.width(8.dp)); Text("Seleccionar Carpeta de Música")
                 }
+            } else if (!conectado) {
+                // SELECTOR DE PESTAÑAS
+                TabRow(selectedTabIndex = selectedTab, containerColor = Color.Transparent, contentColor = DarkPlum, indicator = { tabPositions ->
+                    TabRowDefaults.SecondaryIndicator(Modifier.tabIndicatorOffset(tabPositions[selectedTab]), color = DarkPlum)
+                }) {
+                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Mi Playlist (${listaReproduccion.size})", fontWeight = FontWeight.Bold) })
+                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Catálogo (${todosLosArchivos.size})") })
+                }
 
-                if (todosLosArchivos.isNotEmpty()) {
-                    Text("Catálogo de Música:", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
-                    LazyColumn(modifier = Modifier.heightIn(max = 200.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        items(todosLosArchivos) { cancion ->
+                if (selectedTab == 0) {
+                    // VISTA CATALOGO (Con buscador y seleccionar todo)
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        label = { Text("Buscar canción...") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        singleLine = true
+                    )
+                    
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { savePlaylist(todosLosArchivos) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = LightPlum)) {
+                            Text("Seleccionar Todo", fontSize = 12.sp)
+                        }
+                        Button(onClick = { savePlaylist(emptyList()) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)) {
+                            Text("Borrar Todo", fontSize = 12.sp)
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val filteredCatalog = todosLosArchivos.filter { it.second.contains(searchQuery, ignoreCase = true) }
+                    
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(filteredCatalog) { cancion ->
                             val isSelected = listaReproduccion.contains(cancion)
                             Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
                                 Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -594,22 +623,44 @@ fun PantallaPrincipal(onExit: () -> Unit) {
                             }
                         }
                     }
-                }
-            }
+                } else {
+                    // VISTA PLAYLIST (Con Arrastrar y Soltar)
+                    val lazyListState = rememberLazyListState()
+                    val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
+                        val newList = listaReproduccion.toMutableList()
+                        newList.add(to.index, newList.removeAt(from.index))
+                        listaReproduccion = newList
+                    }
 
-            if (listaReproduccion.isNotEmpty()) {
-                Text("Lista de Reproducción:", style = MaterialTheme.typography.titleMedium, color = DarkPlum)
-                LazyColumn(modifier = Modifier.heightIn(max = 250.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    itemsIndexed(listaReproduccion) { index, cancion ->
-                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                            Row(modifier = Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(text = cancion.second, modifier = Modifier.weight(1f), maxLines = 1)
-                                Row {
-                                    IconButton(onClick = { moverArriba(index) }, enabled = index > 0 && !conectado) { 
-                                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Subir", tint = if (index > 0 && !conectado) DarkPlum else Color.Gray) 
-                                    }
-                                    IconButton(onClick = { moverAbajo(index) }, enabled = index < listaReproduccion.size - 1 && !conectado) { 
-                                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bajar", tint = if (index < listaReproduccion.size - 1 && !conectado) DarkPlum else Color.Gray) 
+                    LazyColumn(state = lazyListState, modifier = Modifier.heightIn(max = 350.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        itemsIndexed(listaReproduccion, key = { _, item -> item.first }) { index, cancion ->
+                            ReorderableItem(reorderableState, key = cancion.first) { isDragging ->
+                                val elevation = if (isDragging) 8.dp else 1.dp
+                                
+                                // RESALTAR CANCION SONANDO
+                                val nombreLimpio = cleanFileName(cancion.second)
+                                val isPlaying = conectado && !isLiveMicUi && (cancionActual.contains(nombreLimpio, ignoreCase = true) || nombreLimpio.contains(cancionActual, ignoreCase = true))
+                                val cardBg = if (isPlaying) HighlightBg else Color.White
+
+                                Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(elevation), colors = CardDefaults.cardColors(containerColor = cardBg)) {
+                                    Row(modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        
+                                        IconButton(modifier = Modifier.draggableHandle(), onClick = {}) {
+                                            Icon(Icons.Default.DragHandle, contentDescription = "Mover")
+                                        }
+
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = cancion.second, 
+                                            modifier = Modifier.weight(1f), 
+                                            maxLines = 1,
+                                            fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isPlaying) DarkPlum else TextDark
+                                        )
+                                        if (isPlaying) {
+                                            Icon(Icons.Default.VolumeUp, contentDescription = "Sonando", tint = DarkPlum, modifier = Modifier.size(20.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
                                     }
                                 }
                             }
