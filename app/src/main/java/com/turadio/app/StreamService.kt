@@ -141,11 +141,16 @@ class StreamService : Service() {
         return START_STICKY
     }
 
+    // --- AQUI ESTA EL CAMBIO DEL TEXTO ---
     private fun notificarDesconexion() {
         val scope = CoroutineScope(Dispatchers.IO)
         scope.launch {
             try {
-                val jsonDb = JSONObject().apply { put("titulo", "Fuera del aire"); put("timestamp", System.currentTimeMillis()) }
+                // Cambiamos "Fuera del aire" por el texto solicitado
+                val jsonDb = JSONObject().apply { 
+                    put("titulo", "A Voz en Cuello: Fuera de línea") 
+                    put("timestamp", System.currentTimeMillis()) 
+                }
                 val client = OkHttpClient()
                 client.newCall(Request.Builder().url(firebaseDbUrl).put(jsonDb.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
 
@@ -436,12 +441,11 @@ class StreamService : Service() {
         }
     }
 
-    // NOTIFICACION INAMOVIBLE
     private fun buildNotification(title: String, song: String): Notification {
         val builder = Notification.Builder(this, "RadioChannel")
             .setContentTitle("RadioMixer: $title")
             .setSmallIcon(android.R.drawable.ic_media_play)
-            .setOngoing(true) // ESTO IMPIDE QUE SE DESLICE
+            .setOngoing(true)
         if (song.isNotEmpty()) builder.setContentText(song) else builder.setContentText(title)
         return builder.build()
     }
